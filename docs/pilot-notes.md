@@ -115,12 +115,69 @@ Measured on `202504271820_GX010750.MP4` (4,005,605,553 B):
 - Caveats: single session; scratch target was the boot SSD (93 % full); no SSH/rsync or
   homeserver-local comparison was measured on this Mac (that comparison belongs to #13).
 
+## Access-transport decision (issue #13)
+
+**Decision: every v1 node uses its mounted/local archive path. No SSH/rsync transport is added,
+and the three access primitives in `docs/architecture.md` (`fetch_source`, `put_back`, `replace`)
+stay unchanged.**
+
+Evidence:
+
+- Mac (#11): SMB 3.1.1 sequential read 86.3/86.5 MB/s; SMB → local scratch copy 58.6 MB/s.
+- Homeserver (#10): the archive drives are mounted locally (ext4); the container reaches them
+  through a `rw` bind mount.
+- The pipeline reads the source once per clip and encodes two-pass x265 at 720p/800 kbps: the
+  encode is CPU-bound and consumes far less than the measured SMB rate on both nodes.
+- The two-node concurrency check passed through the mounted paths (one FFmpeg per node, no
+  duplicate claims).
+
+Rationale: every node has a mounted route that is faster than the workload needs, so a second
+transport would add failure modes without a measured benefit. The #11 caveat stands — no SSH/rsync
+comparison was measured — but it is not required to select the fastest *available* route.
+
+Revisit if: a node cannot mount the archive; sustained SMB reads drop below the encode input
+rate; SMB transfer/replace fails repeatedly; or scan cost grows with the archive.
+
+## Rerun matrix and V1 readiness (issue #13)
+
+`scripts/rerun_matrix.py` automates plan.md pilot step 7 and checks, end to end against a real
+controller and worker subprocesses: completed clips skip after a template change; a changed
+source is flagged and never silently replaced; a SIGKILLed worker's clip is requeued by the
+expired lease and completed by the next run; an injected pass-2 encode failure leaves the source
+byte-identical and a retry completes the clip. The synthetic variant (`--synthetic`) runs
+locally/CI and mirrors all four scenarios.
+
+Operator command (the archive is read-only; every replacement happens in `$MATRIX_ROOT`):
+
+```sh
+.venv/bin/python scripts/rerun_matrix.py run \
+  --archive-root "$ARCHIVE_ROOT" \
+  --clip "VIDEOS/MOTORCYCLE/SMALL_CLIP.MP4" \
+  --matrix-root "$MATRIX_ROOT" \
+  --report docs/pilot/reports/rerun-matrix.json
+```
+
+Results (filled after the operator run; the sanitized report lands in
+`docs/pilot/reports/rerun-matrix.json`):
+
+| Scenario | Result | Key evidence |
+| --- | --- | --- |
+| `rerun_skip` — completed clips skip after a template change | pending operator run | |
+| `changed_review` — changed source fingerprints go to review | pending operator run | |
+| `interrupted_resume` — interrupted runs resume | pending operator run | |
+| `failed_recover` — failed jobs recover without losing sources | pending operator run | |
+
+See [v1-readiness.md](v1-readiness.md) for the full V1 checklist, the remaining milestones, and
+the deferrals.
+
 ## Follow-ups
 
 - [ ] (candidate) Per-vendor capture-time behaviour (GoPro local-with-`Z` vs DJI true UTC) — file
       an issue when DJI footage joins a processing run.
 - [ ] (optional, data-only) Repair or accept the +8 h MOTORCYCLE filename prefixes outside this
       pilot.
+- [ ] (proposed in the #13 pull request) GUI queue-start slice; retry/requeue for failed and
+      review clips; camera-clock-reset detection — drafts recorded there until filed.
 - `local_wall_clock` default: **confirmed unchanged** (this pilot's timezone decision).
 
 ## Reproduction
