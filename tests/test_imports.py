@@ -8,6 +8,7 @@ MODULES = [
     "videocompressor",
     "videocompressor.cli",
     "videocompressor.core",
+    "videocompressor.core.capture_time",
     "videocompressor.core.config",
     "videocompressor.core.manifest",
     "videocompressor.core.models",
