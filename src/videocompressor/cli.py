@@ -1,9 +1,9 @@
 """Command-line entry points for Video Compressor.
 
 ``vc probe`` (issue #2) and ``vc scan`` (issue #3) are implemented and
-read-only; they never write into the archive. The remaining subcommands belong
-to later issues; until those land, they exit with a clear "not implemented"
-message (exit code 2) instead of doing nothing.
+read-only; they never write into the archive. ``vc controller`` (issue #7) runs
+the local controller. The remaining subcommands belong to later issues; until
+those land, they exit with a clear "not implemented" message (exit code 2).
 """
 
 from __future__ import annotations
@@ -15,11 +15,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from videocompressor import __version__
+from videocompressor.controller.server import ControllerServer, new_token, open_manifest
+from videocompressor.controller.store import ControllerStore, default_db_path
 from videocompressor.core.capture_time import bucket_for, resolve_capture_time
 from videocompressor.core.config import (
     DEFAULT_TEMPLATE_NAME,
     default_manifest_path,
     load_config,
+    save_config,
 )
 from videocompressor.core.manifest import Manifest
 from videocompressor.core.models import (
@@ -45,7 +48,7 @@ EXIT_USAGE = 2
 #: Subcommands stubbed here; the owning issue implements each one.
 _SUBCOMMANDS = {
     "worker": "run the worker agent for this node (issue #6)",
-    "controller": "run the local controller and worker registry (issue #7)",
+    "controller": "run the local controller and worker registry",
     "gui": "launch the graphical interface (issue #8)",
 }
 
@@ -113,7 +116,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     for name, help_text in _SUBCOMMANDS.items():
-        subparsers.add_parser(name, help=help_text)
+        subparser = subparsers.add_parser(name, help=help_text)
+        if name == "controller":
+            subparser.add_argument(
+                "--host", help="bind address (default: the config value, 127.0.0.1)"
+            )
+            subparser.add_argument(
+                "--port", type=int, help="bind port (default: the config value, 8765)"
+            )
+            subparser.add_argument(
+                "--config", type=Path, help="config file path (default: the per-user path)"
+            )
+            subparser.add_argument(
+                "--db", type=Path, help="controller database path (default: the per-user path)"
+            )
+            subparser.add_argument(
+                "--manifest",
+                type=Path,
+                help="manifest database (default: the per-user path)",
+            )
+            subparser.add_argument(
+                "--print-token",
+                action="store_true",
+                help="print the access token (generating one if needed) and exit",
+            )
 
     return parser
 
@@ -133,8 +159,62 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "probe":
         return _run_probe(args.file)
 
+    if args.command == "controller":
+        return _run_controller(args)
+
     print(f"vc {args.command}: not implemented yet", file=sys.stderr)
     return EXIT_NOT_IMPLEMENTED
+
+
+def _run_controller(args: argparse.Namespace) -> int:
+    if args.port is not None and not 0 <= args.port <= 65535:
+        print("vc controller: --port must be between 0 and 65535", file=sys.stderr)
+        return 2
+
+    config = load_config(args.config)
+    if args.print_token:
+        if config.controller.token is None:
+            config.controller.token = new_token()
+            save_config(config, args.config)
+        print(config.controller.token)
+        return 0
+
+    if config.controller.token is None:
+        config.controller.token = new_token()
+        saved = save_config(config, args.config)
+        print(f"vc controller: generated an access token and saved it to {saved}", file=sys.stderr)
+
+    host = args.host or config.controller.host
+    port = args.port if args.port is not None else config.controller.port
+    store = ControllerStore.open(args.db or default_db_path())
+    manifest_path = args.manifest if args.manifest is not None else default_manifest_path()
+    manifest, durable = open_manifest(manifest_path)
+    server = ControllerServer(
+        store=store,
+        manifest=manifest,
+        token=config.controller.token,
+        host=host,
+        port=port,
+        templates=config.templates,
+    )
+    server.start_background()
+    print(f"vc controller: listening on {server.base_url}")
+    if durable:
+        print(f"vc controller: queue: durable manifest at {manifest_path}")
+    else:
+        print(
+            "vc controller: queue: in-memory stub (the manifest could not be opened)"
+            " - queued clips will NOT survive a restart",
+            file=sys.stderr,
+        )
+    print("vc controller: press Ctrl-C to stop")
+    try:
+        server.wait()
+    except KeyboardInterrupt:
+        print("vc controller: stopping", file=sys.stderr)
+    finally:
+        server.stop()
+    return 0
 
 
 def _run_scan(args: argparse.Namespace) -> int:

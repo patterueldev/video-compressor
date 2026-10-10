@@ -24,6 +24,9 @@ CONFIG_FILENAME = "config.toml"
 
 MANIFEST_FILENAME = "manifest.sqlite"
 
+DEFAULT_CONTROLLER_HOST = "127.0.0.1"
+DEFAULT_CONTROLLER_PORT = 8765
+
 
 def default_config_path() -> Path:
     """Return the per-user config path for this app."""
@@ -43,6 +46,15 @@ class CaptureTimeSettings:
 
 
 @dataclass
+class ControllerSettings:
+    """Local controller bind address and bearer token (issue #7)."""
+
+    host: str = DEFAULT_CONTROLLER_HOST
+    port: int = DEFAULT_CONTROLLER_PORT
+    token: str | None = None
+
+
+@dataclass
 class AppConfig:
     """The per-user configuration document."""
 
@@ -50,6 +62,7 @@ class AppConfig:
     templates: dict[str, TemplateSettings] = field(
         default_factory=lambda: {DEFAULT_TEMPLATE_NAME: TemplateSettings()}
     )
+    controller: ControllerSettings = field(default_factory=ControllerSettings)
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -72,11 +85,18 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
 
 
 def _config_to_toml(config: AppConfig) -> dict[str, object]:
+    controller: dict[str, object] = {
+        "host": config.controller.host,
+        "port": config.controller.port,
+    }
+    if config.controller.token is not None:
+        controller["token"] = config.controller.token
     return {
         "capture_time": {"mode": str(config.capture_time.mode)},
         "templates": {
             name: _template_to_toml(template) for name, template in config.templates.items()
         },
+        "controller": controller,
     }
 
 
@@ -111,6 +131,13 @@ def _config_from_toml(data: Mapping[str, object]) -> AppConfig:
         }
         if parsed:
             config.templates = parsed
+
+    controller = data.get("controller")
+    if isinstance(controller, Mapping):
+        config.controller.host = str(controller.get("host", config.controller.host))
+        config.controller.port = int(controller.get("port", config.controller.port))
+        token = controller.get("token")
+        config.controller.token = str(token) if token is not None else None
 
     return config
 

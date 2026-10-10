@@ -23,7 +23,8 @@ Rules:
 - CLI subcommands are stubs until their owning issue lands; each exits with code 2 and a clear
   "not implemented" message. `vc probe` (issue #2) and `vc scan` (issue #3) are implemented and
   read-only: `probe` reports one clip's capture time, mode, bucket, and review reason; `scan`
-  classifies a footage folder and writes only its dry-run report.
+  classifies a footage folder and writes only its dry-run report. `vc controller` (issue #7)
+  serves the controller contract below; `worker` and `gui` remain stubs.
 
 ## Data flow
 
@@ -54,9 +55,10 @@ homeserver.
 - Capture times come from issue #2's resolver (`core/capture_time.py`) through the `core/scan.py`
   inspector; missing or conflicting timestamps route clips to review. Tests inject fake inspectors
   or fake probe results, so the scan suite stays ffprobe-free.
-- The manifest `events` table (seq/at/level/message) is the run-log reference backing the
-  controller `GET /api/v1/events` contract. `LEASE_TTL_SECONDS` (90) and
-  `HEARTBEAT_INTERVAL_SECONDS` (15) live in `core/manifest.py`.
+- The manifest `events` table (seq/at/level/message) records engine-level events; the controller
+  keeps its per-run log (worker and run tagging) in its own database, served by
+  `GET /api/v1/events`. `LEASE_TTL_SECONDS` (90) and `HEARTBEAT_INTERVAL_SECONDS` (15) live in
+  `core/manifest.py` and are re-exported by `controller/constants.py`.
 
 ## Access-transport seam
 
@@ -111,7 +113,9 @@ over the local network.
 
 - Base URL: `http://<bind>:<port>/api/v1`, default bind `127.0.0.1:8765`. Bind address and port
   are configurable (issue #7); use the LAN interface (e.g. `0.0.0.0:8765`) when workers run on
-  other machines. The token is required in every deployment.
+  other machines. The token is required in every deployment. The `[controller]` section of the
+  per-user config holds `host`, `port`, and `token`; `vc controller` flags override the bind
+  address for one run.
 - Auth: every request carries `Authorization: Bearer <token>`. The token is generated once and
   stored in the per-user config; workers receive it out of band and it is never committed.
   Missing or invalid token → `401`.
@@ -173,6 +177,10 @@ GUI. `"stop": true` in the response tells the worker to terminate the active job
 {"stop": false, "lease_seconds": 90}
 ```
 
+The optional `progress.phase` (`copied`, `encoding`, `validated`, `transferring`, `replacing`)
+advances the clip's manifest stage; a heartbeat carrying `active` for a clip the worker no longer
+holds is rejected with `409` (the worker must abort and discard its local work).
+
 #### `POST /api/v1/jobs/claim`
 
 Claim the next queued clip for a worker. `204` when nothing is available. Claiming is
@@ -218,7 +226,8 @@ caller no longer holds the lease.
 #### `POST /api/v1/jobs/fail`
 
 Report a terminal failure. `"disposition": "review"` parks the clip in the review queue (for
-example, when the source changed since claim); `"failed"` marks it failed. `204` on success.
+example, when the source changed since claim); `"failed"` marks it failed; `"requeue"` returns
+the clip to the queue (used to acknowledge an operator stop). `204` on success.
 
 ```json
 // request
@@ -250,6 +259,24 @@ most recent events (bounded) are returned.
   "next": 42
 }
 ```
+
+#### Additive endpoints (issue #7)
+
+Monitoring and stop/resume additions; every v1 payload above stays valid.
+
+- `POST /api/v1/workers/{worker_id}/resume` — clears a pending stop request. `204`.
+- `GET /api/v1/workers` — registry snapshot for monitors: worker id, name, online, last seen,
+  root mappings, stop flag, active clip, and the latest heartbeat progress.
+- `GET /api/v1/summary?run_id=<id>` — run summary counts (completed, skipped, failed,
+  review-needed), from a finished run or computed live.
+
+#### Lease sweep and reconciliation
+
+The controller sweeps every 5 s: workers silent for 90 s flip to offline, and expired job leases
+are recovered through `Manifest.reconcile()`. Clips that expired in the copy/encode stages are
+requeued; clips in the replacement stages (`validated`, `transferring`, `replacing`) park in
+`review` until the issue #5 recovery protocol confirms the source/backup state. Nothing is
+claimable twice while a live lease or unresolved recovery exists.
 
 Payloads are intentionally minimal: adding optional fields is backwards compatible; removing or
 renaming a field requires contract v2.
