@@ -1,0 +1,5 @@
+# Local, untracked deployment state (issue #10).
+.env
+worker.toml
+scratch/
+logs/

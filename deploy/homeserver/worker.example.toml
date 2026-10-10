@@ -1,0 +1,19 @@
+# Homeserver worker config (issue #10). Copy to worker.toml (gitignored) and edit.
+# The token never lives in this file: it is read from the environment variable
+# named by token_env, which compose passes from the untracked .env file.
+
+[worker]
+id = "homeserver"
+name = "Homeserver worker"
+# The machine running the GUI/controller, reachable from this host.
+controller_url = "http://controller-host:8765"
+token_env = "VC_WORKER_TOKEN"
+# Container path of the scratch mount; compose maps VC_SCRATCH_ROOT (internal disk) here.
+scratch_dir = "/var/lib/videocompressor/scratch"
+# Keep the node light: 2 threads on the 2-core homeserver (issue cap: 2-3).
+thread_cap = 2
+poll_seconds = 5
+
+[roots]
+# One entry per controller root_id; container path of the rw archive mount.
+archive = "/srv/archive"
