@@ -40,6 +40,6 @@ def test_module_imports(module: str) -> None:
     try:
         importlib.import_module(module)
     except ModuleNotFoundError as exc:
-        if module == "videocompressor.gui" and _missing_pyside(exc):
-            pytest.skip("videocompressor.gui needs the optional gui extra (PySide6)")
+        if module.startswith("videocompressor.gui") and _missing_pyside(exc):
+            pytest.skip("videocompressor.gui modules need the optional gui extra (PySide6)")
         raise
