@@ -4,24 +4,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from videocompressor import cli
-from videocompressor.cli import EXIT_USAGE, main
+from videocompressor.cli import EXIT_ERROR, EXIT_USAGE, main
 from videocompressor.core.fingerprint import fingerprint_file
 from videocompressor.core.markers import FolderMarker, MarkerClip, write_marker
-from videocompressor.core.models import (
-    CaptureTime,
-    CaptureTimeMode,
-    MediaInfo,
-    MediaStream,
-)
-from videocompressor.core.scan import ClipInspection, derive_root_id
-
-PHT = timezone(timedelta(hours=8))
+from videocompressor.core.models import MediaInfo, MediaStream
+from videocompressor.core.scan import derive_root_id
 
 
 def _write_file(path: Path, size: int = 8192, seed: int = 0) -> Path:
@@ -33,7 +24,9 @@ def _write_file(path: Path, size: int = 8192, seed: int = 0) -> Path:
     return path
 
 
-def _media(duration_s: float = 120.0, *, audio: bool = True) -> MediaInfo:
+def _media(
+    duration_s: float = 120.0, *, audio: bool = True, creation_time: str | None = None
+) -> MediaInfo:
     streams = [MediaStream(index=0, codec_type="video", codec_name="hevc", width=1920, height=1080)]
     if audio:
         streams.append(MediaStream(index=1, codec_type="audio", codec_name="aac", channels=2))
@@ -43,17 +36,18 @@ def _media(duration_s: float = 120.0, *, audio: bool = True) -> MediaInfo:
         duration_s=duration_s,
         size_bytes=8192,
         bit_rate=9_000_000,
+        format_tags={"creation_time": creation_time} if creation_time else {},
         streams=tuple(streams),
     )
 
 
-def _fake_inspector(table: dict[str, ClipInspection]) -> Callable[[Path], ClipInspection]:
-    def inspect(path: Path) -> ClipInspection:
+def _fake_probe(table: dict[str, MediaInfo]) -> Callable[[Path], MediaInfo]:
+    def probe(path: Path) -> MediaInfo:
         if path.name not in table:
-            raise AssertionError(f"unexpected inspection of {path.name}")
+            raise AssertionError(f"unexpected probe of {path.name}")
         return table[path.name]
 
-    return inspect
+    return probe
 
 
 def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
@@ -73,33 +67,16 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
     return root, folder
 
 
-def _capture(when: datetime | None) -> CaptureTime:
-    return CaptureTime(
-        when=when,
-        raw=None,
-        source="format",
-        mode=CaptureTimeMode.UTC,
-    )
-
-
 def test_scan_dry_run_reports_classifications_and_writes_only_the_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
     root, folder = _build_tree(tmp_path)
     monkeypatch.setattr(
-        cli,
-        "probe_inspector",
-        lambda *, capture_resolver=None: _fake_inspector(
+        "videocompressor.core.scan.probe_media",
+        _fake_probe(
             {
-                "GS_NEW.MP4": ClipInspection(
-                    media=_media(),
-                    capture_time=_capture(datetime(2024, 6, 14, 9, 5, tzinfo=PHT)),
-                ),
-                "GS_REVIEW.MP4": ClipInspection(
-                    media=_media(),
-                    capture_time=_capture(None),
-                    note="capture time unavailable",
-                ),
+                "GS_NEW.MP4": _media(120.0, creation_time="2024-06-14T09:05:00.000000Z"),
+                "GS_REVIEW.MP4": _media(60.0),
             }
         ),
     )
@@ -149,6 +126,7 @@ def test_scan_dry_run_reports_classifications_and_writes_only_the_report(
     assert clips["2024-06-Ride/GS_NEW.MP4"]["video_bitrate_kbps"] == 800
     assert clips["2024-06-Ride/GS_DONE.MP4"]["classification"] == "complete"
     assert clips["2024-06-Ride/GS_REVIEW.MP4"]["classification"] == "review"
+    assert clips["2024-06-Ride/GS_REVIEW.MP4"]["note"] == "capture time missing"
 
 
 def test_scan_rejects_a_folder_outside_the_root(
@@ -202,11 +180,16 @@ def test_scan_rejects_an_unknown_template(
     assert not (tmp_path / "report.json").exists()
 
 
-def test_scan_marks_clips_review_until_issue_2_lands(
+def test_scan_without_ffprobe_is_an_environment_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
     root, folder = _build_tree(tmp_path)
     monkeypatch.chdir(tmp_path)
+
+    def fake_run(command, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "ffprobe")
+
+    monkeypatch.setattr("videocompressor.core.probe.subprocess.run", fake_run)
 
     exit_code = main(
         [
@@ -222,12 +205,6 @@ def test_scan_marks_clips_review_until_issue_2_lands(
         ]
     )
 
-    assert exit_code == 0
-    stderr = capsys.readouterr().err
-    assert "issue #2" in stderr
-    report = json.loads((tmp_path / "report.json").read_text())
-    clips = {clip["relative_path"]: clip for clip in report["clips"]}
-    assert clips["2024-06-Ride/GS_NEW.MP4"]["classification"] == "review"
-    assert "issue #2" in clips["2024-06-Ride/GS_NEW.MP4"]["note"]
-    # A clip completed before issue #2 still classifies as complete.
-    assert clips["2024-06-Ride/GS_DONE.MP4"]["classification"] == "complete"
+    assert exit_code == EXIT_ERROR
+    assert "ffprobe not found" in capsys.readouterr().err
+    assert not (tmp_path / "report.json").exists()

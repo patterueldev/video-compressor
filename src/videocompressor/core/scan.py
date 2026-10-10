@@ -2,13 +2,9 @@
 
 Classification combines the filesystem scan, the central manifest
 (:mod:`videocompressor.core.manifest`), per-folder markers
-(:mod:`videocompressor.core.markers`), and capture times. Capture-time
-resolution belongs to issue #2 and is not merged yet, so scans take an
-injectable :data:`Inspector`; the real inspector reports inspection errors and
-missing capture times as review-needed until issue #2 lands.
-
-A scan never writes anything except the caller's report: markers and the
-manifest are read-only here.
+(:mod:`videocompressor.core.markers`), and capture times from issue #2
+(:mod:`videocompressor.core.capture_time`). A scan never writes anything except
+the caller's report: markers and the manifest are read-only here.
 """
 
 from __future__ import annotations
@@ -22,10 +18,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from videocompressor.core.capture_time import bucket_for, resolve_capture_time
 from videocompressor.core.fingerprint import fingerprint_confirms, fingerprint_file
 from videocompressor.core.manifest import Manifest
 from videocompressor.core.markers import FolderMarker, MarkerClip, read_marker
 from videocompressor.core.models import (
+    Bucket,
     CaptureIssue,
     CaptureTime,
     CaptureTimeMode,
@@ -44,20 +42,15 @@ MEDIA_SUFFIXES = frozenset({".mp4", ".mov"})
 #: Default dry-run report file name (overridable with ``--report``).
 DRY_RUN_REPORT_FILENAME = "report.json"
 
-DAYTIME = "daytime"
-EVENING = "evening"
-
 #: Manifest states where a worker is currently handling the clip.
-_ACTIVE_STATES = frozenset(
-    {
-        JobState.CLAIMED,
-        JobState.COPIED,
-        JobState.ENCODING,
-        JobState.VALIDATED,
-        JobState.TRANSFERRING,
-        JobState.REPLACING,
-    }
-)
+_ACTIVE_STATES = frozenset({
+    JobState.CLAIMED,
+    JobState.COPIED,
+    JobState.ENCODING,
+    JobState.VALIDATED,
+    JobState.TRANSFERRING,
+    JobState.REPLACING,
+})
 
 _CAPTURE_NOTES = {
     CaptureIssue.MISSING_TIMESTAMP: "capture time missing",
@@ -74,56 +67,30 @@ class ClipInspection:
     media: MediaInfo | None = None
     capture_time: CaptureTime | None = None
     error: str | None = None
-    note: str | None = None
 
 
 #: Callable that inspects one media file (fixture-injected in tests).
 Inspector = Callable[[Path], ClipInspection]
 
-#: Callable that resolves a probed file's capture time (issue #2).
-CaptureResolver = Callable[[MediaInfo], CaptureTime]
 
-
-def probe_inspector(*, capture_resolver: CaptureResolver | None = None) -> Inspector:
+def probe_inspector(*, mode: CaptureTimeMode, timezone_name: str) -> Inspector:
     """Build the real inspector: ffprobe plus issue #2's capture-time resolver.
 
-    Until issue #2 lands there is no resolver; inspected files then carry a
-    review-ready note and the dry run never proposes encoding them. Probe
-    failures and unreadable files become inspection errors either way.
+    Unreadable or unsupported files become inspection errors; missing or
+    conflicting capture timestamps stay in the returned ``CaptureTime`` and the
+    scan routes them to review. A missing ffprobe binary raises
+    ``FFprobeUnavailableError`` out of the scan as an environment failure.
     """
 
     def inspect(path: Path) -> ClipInspection:
         try:
             media = probe_media(path)
-        except (ProbeError, OSError, NotImplementedError) as error:
+        except ProbeError as error:
             return ClipInspection(error=str(error) or error.__class__.__name__)
-        if capture_resolver is None:
-            return ClipInspection(
-                media=media,
-                note="capture time unavailable: probe support lands in issue #2",
-            )
-        return ClipInspection(media=media, capture_time=capture_resolver(media))
+        capture = resolve_capture_time(media, mode=mode, timezone=timezone_name)
+        return ClipInspection(media=media, capture_time=capture)
 
     return inspect
-
-
-def load_capture_resolver(
-    *, mode: CaptureTimeMode, timezone_name: str
-) -> CaptureResolver | None:
-    """Wire issue #2's capture-time resolver when its module exists.
-
-    Adapter point: when issue #2 merges, this function is the only wiring this
-    module needs. Until then scans degrade to review-needed capture times.
-    """
-    try:
-        from videocompressor.core.capture_time import resolve_capture_time
-    except ImportError:
-        return None
-
-    def resolve(media: MediaInfo) -> CaptureTime:
-        return resolve_capture_time(media, mode=mode, timezone=timezone_name)
-
-    return resolve
 
 
 @dataclass(frozen=True)
@@ -209,7 +176,7 @@ class ScanRow:
     mtime_ns: int | None = None
     digest: str | None = None
     capture_time: CaptureTime | None = None
-    bucket: str | None = None
+    bucket: Bucket | None = None
     video_bitrate_kbps: int | None = None
     audio_bitrate_kbps: int | None = None
     estimated_bytes: int | None = None
@@ -248,12 +215,13 @@ def scan_folder(
     folder: Path,
     template_id: str,
     settings: TemplateSettings,
+    capture_mode: CaptureTimeMode = CaptureTimeMode.LOCAL_WALL_CLOCK,
     manifest: Manifest | None = None,
     inspector: Inspector | None = None,
 ) -> ScanReport:
     """Classify every media file under ``folder`` without writing anything."""
     if inspector is None:
-        inspector = probe_inspector()
+        inspector = probe_inspector(mode=capture_mode, timezone_name=settings.timezone)
     targets = discover_media(root, folder)
     root_resolved = root.resolve()
     folder_resolved = folder.resolve()
@@ -304,16 +272,18 @@ def scan_folder(
                 or inspection.capture_time.issue is not None
             ):
                 classification = Classification.REVIEW
-                note = _capture_note(inspection.capture_time, inspection.note)
+                note = _capture_note(inspection.capture_time)
             else:
                 capture = inspection.capture_time
                 assert capture.when is not None
-                bucket = (
-                    EVENING if capture.when.time() >= settings.evening_start else DAYTIME
+                bucket = bucket_for(
+                    capture.when,
+                    evening_start=settings.evening_start,
+                    timezone=settings.timezone,
                 )
                 video_bitrate_kbps = (
                     settings.evening_video_bitrate_kbps
-                    if bucket == EVENING
+                    if bucket is Bucket.EVENING
                     else settings.daytime_video_bitrate_kbps
                 )
                 media = inspection.media
@@ -383,7 +353,7 @@ def report_to_dict(report: ScanReport) -> dict[str, object]:
                     if row.capture_time is not None and row.capture_time.when is not None
                     else None
                 ),
-                "bucket": row.bucket,
+                "bucket": row.bucket.value if row.bucket is not None else None,
                 "video_bitrate_kbps": row.video_bitrate_kbps,
                 "audio_bitrate_kbps": row.audio_bitrate_kbps,
                 "estimated_bytes": row.estimated_bytes,
@@ -472,9 +442,9 @@ def _detail(label: str, detail: str | None) -> str:
     return f"{label}: {detail}" if detail else label
 
 
-def _capture_note(capture: CaptureTime | None, fallback: str | None) -> str:
+def _capture_note(capture: CaptureTime | None) -> str:
     if capture is None or capture.issue is None:
-        return fallback or "capture time unavailable"
+        return "capture time unavailable"
     note = _CAPTURE_NOTES.get(capture.issue, str(capture.issue))
     return f"{note}: {capture.raw}" if capture.raw else note
 
@@ -484,7 +454,7 @@ def _row_cells(row: ScanRow) -> tuple[str, ...]:
     return (
         row.relative_path,
         when.isoformat(sep=" ") if when is not None else "-",
-        row.bucket or "-",
+        row.bucket.value if row.bucket is not None else "-",
         str(row.classification),
         f"{row.video_bitrate_kbps} kbps" if row.video_bitrate_kbps is not None else "-",
         _human_bytes(row.estimated_bytes),

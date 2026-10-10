@@ -12,6 +12,7 @@ from videocompressor.core.fingerprint import fingerprint_file
 from videocompressor.core.manifest import Manifest
 from videocompressor.core.markers import FolderMarker, MarkerClip, write_marker
 from videocompressor.core.models import (
+    Bucket,
     CaptureIssue,
     CaptureTime,
     CaptureTimeMode,
@@ -23,6 +24,7 @@ from videocompressor.core.models import (
     MediaStream,
     TemplateSettings,
 )
+from videocompressor.core.probe import ProbeError
 from videocompressor.core.scan import (
     ClipInspection,
     derive_root_id,
@@ -48,7 +50,9 @@ def _write_file(path: Path, size: int = 8192, seed: int = 0) -> Path:
     return path
 
 
-def _media(duration_s: float = 60.0, *, audio: bool = True) -> MediaInfo:
+def _media(
+    duration_s: float = 60.0, *, audio: bool = True, creation_time: str | None = None
+) -> MediaInfo:
     streams = [MediaStream(index=0, codec_type="video", codec_name="hevc", width=1920, height=1080)]
     if audio:
         streams.append(MediaStream(index=1, codec_type="audio", codec_name="aac", channels=2))
@@ -58,6 +62,7 @@ def _media(duration_s: float = 60.0, *, audio: bool = True) -> MediaInfo:
         duration_s=duration_s,
         size_bytes=8192,
         bit_rate=9_000_000,
+        format_tags={"creation_time": creation_time} if creation_time else {},
         streams=tuple(streams),
     )
 
@@ -248,7 +253,7 @@ def test_scan_classifies_a_fixture_tree(tmp_path: Path):
 
     new_row = by_path["2024-06-Ride/GS_NEW.MP4"]
     assert new_row.classification is Classification.NEW
-    assert new_row.bucket == "daytime"
+    assert new_row.bucket is Bucket.DAYTIME
     assert new_row.video_bitrate_kbps == 800
     assert new_row.audio_bitrate_kbps == 96
     assert new_row.estimated_bytes == 120 * 896_000 // 8
@@ -256,7 +261,7 @@ def test_scan_classifies_a_fixture_tree(tmp_path: Path):
 
     no_audio_row = by_path["2024-06-Ride/GS_NOAUDIO.MP4"]
     assert no_audio_row.classification is Classification.NEW
-    assert no_audio_row.bucket == "evening"
+    assert no_audio_row.bucket is Bucket.EVENING
     assert no_audio_row.audio_bitrate_kbps is None
     assert no_audio_row.estimated_bytes == 60 * 800_000 // 8
     assert no_audio_row.note == "no audio stream"
@@ -376,19 +381,31 @@ def test_a_recorded_source_change_is_flagged_changed(tmp_path: Path):
     assert report.rows[0].size_bytes == clip.stat().st_size
 
 
-def test_probe_inspector_reports_the_issue_2_stub_as_an_error(tmp_path: Path):
+def test_probe_inspector_reports_probe_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     clip = _write_file(tmp_path / "clip.MP4")
 
-    inspection = probe_inspector()(clip)
+    def fake_probe(path: Path) -> MediaInfo:
+        raise ProbeError(f"{path}: Invalid data found when processing input")
+
+    monkeypatch.setattr("videocompressor.core.scan.probe_media", fake_probe)
+
+    inspection = probe_inspector(
+        mode=CaptureTimeMode.LOCAL_WALL_CLOCK, timezone_name="Asia/Manila"
+    )(clip)
 
     assert inspection.media is None
-    assert inspection.error is not None and "issue #2" in inspection.error
+    assert inspection.error is not None
+    assert "Invalid data found" in inspection.error
 
 
-def test_scan_marks_everything_review_without_capture_time_support(tmp_path: Path):
+def test_scan_resolves_capture_times_through_issue_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     root = tmp_path / "archive"
     folder = root / "ride"
     _write_file(folder / "GS010001.MP4")
+    media = _media(120.0, creation_time="2024-06-14T17:41:00.000000Z")
+    monkeypatch.setattr("videocompressor.core.scan.probe_media", lambda path: media)
 
     report = scan_folder(
         root_id=ROOT_ID,
@@ -398,8 +415,13 @@ def test_scan_marks_everything_review_without_capture_time_support(tmp_path: Pat
         settings=TemplateSettings(),
     )
 
-    assert report.rows[0].classification is Classification.REVIEW
-    assert report.rows[0].note is not None and "issue #2" in report.rows[0].note
+    row = report.rows[0]
+    assert row.classification is Classification.NEW
+    assert row.bucket is Bucket.EVENING
+    assert row.video_bitrate_kbps == 800
+    assert row.audio_bitrate_kbps == 96
+    assert row.estimated_bytes == 120 * 896_000 // 8
+    assert row.capture_time is not None and row.capture_time.when is not None
 
 
 def test_estimate_output_bytes_from_duration_and_bitrates():

@@ -21,8 +21,9 @@ Rules:
 - Only `gui` imports PySide6, and PySide6 is installed only through the `gui` extra; CI and the
   worker never need it.
 - CLI subcommands are stubs until their owning issue lands; each exits with code 2 and a clear
-  "not implemented" message. `vc probe` (issue #2) is implemented and read-only: it probes one
-  clip and reports its capture time, timezone mode, day/evening bucket, and review reason.
+  "not implemented" message. `vc probe` (issue #2) and `vc scan` (issue #3) are implemented and
+  read-only: `probe` reports one clip's capture time, mode, bucket, and review reason; `scan`
+  classifies a footage folder and writes only its dry-run report.
 
 ## Data flow
 
@@ -50,8 +51,9 @@ homeserver.
   skip a valid completed clip: losing one source of truth never forces a re-encode, and a later
   template change never invalidates a completed clip. A recorded completion that no longer
   matches is `changed` and goes to review, never a silent replace.
-- Capture-time resolution belongs to issue #2. Scans take an injectable inspector; until #2
-  lands, inspected clips are marked review-needed instead of trusted.
+- Capture times come from issue #2's resolver (`core/capture_time.py`) through the `core/scan.py`
+  inspector; missing or conflicting timestamps route clips to review. Tests inject fake inspectors
+  or fake probe results, so the scan suite stays ffprobe-free.
 - The manifest `events` table (seq/at/level/message) is the run-log reference backing the
   controller `GET /api/v1/events` contract. `LEASE_TTL_SECONDS` (90) and
   `HEARTBEAT_INTERVAL_SECONDS` (15) live in `core/manifest.py`.

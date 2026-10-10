@@ -33,8 +33,6 @@ from videocompressor.core.probe import FFprobeUnavailableError, ProbeError, prob
 from videocompressor.core.scan import (
     DRY_RUN_REPORT_FILENAME,
     derive_root_id,
-    load_capture_resolver,
-    probe_inspector,
     render_table,
     scan_folder,
     write_report,
@@ -166,16 +164,6 @@ def _run_scan(args: argparse.Namespace) -> int:
     else:
         print(f"vc scan: no manifest at {manifest_path}; classifying without it", file=sys.stderr)
 
-    capture_resolver = load_capture_resolver(
-        mode=config.capture_time.mode, timezone_name=settings.timezone
-    )
-    if capture_resolver is None:
-        print(
-            "vc scan: capture-time support (issue #2) is not merged; "
-            "non-complete clips will show as review",
-            file=sys.stderr,
-        )
-
     try:
         try:
             report = scan_folder(
@@ -184,9 +172,12 @@ def _run_scan(args: argparse.Namespace) -> int:
                 folder=args.folder,
                 template_id=args.template,
                 settings=settings,
+                capture_mode=config.capture_time.mode,
                 manifest=manifest,
-                inspector=probe_inspector(capture_resolver=capture_resolver),
             )
+        except FFprobeUnavailableError as error:
+            print(f"vc scan: {error}", file=sys.stderr)
+            return EXIT_ERROR
         except ValueError as error:
             print(f"vc scan: {error}", file=sys.stderr)
             return EXIT_USAGE
