@@ -10,6 +10,7 @@ from videocompressor.core.models import (
     CaptureIssue,
     CaptureTimeMode,
     Classification,
+    EncodeSettings,
     JobState,
     OriginalHandling,
     TemplateSettings,
@@ -69,3 +70,24 @@ def test_template_settings_are_frozen():
     settings = TemplateSettings()
     with pytest.raises(FrozenInstanceError):
         settings.output_height = 1080
+
+
+def test_encode_settings_defaults_match_motorcycle_template():
+    assert EncodeSettings() == EncodeSettings(
+        output_height=720,
+        video_bitrate_kbps=800,
+        audio_bitrate_kbps=96,
+        audio_codec="aac",
+        ffmpeg_preset="medium",
+    )
+
+
+def test_encode_settings_reject_invalid_values():
+    with pytest.raises(ValueError, match="even"):
+        EncodeSettings(output_height=721)
+    with pytest.raises(ValueError, match="even"):
+        EncodeSettings(output_height=0)
+    with pytest.raises(ValueError, match="video_bitrate"):
+        EncodeSettings(video_bitrate_kbps=0)
+    with pytest.raises(ValueError, match="audio_bitrate"):
+        EncodeSettings(audio_bitrate_kbps=-1)

@@ -83,6 +83,31 @@ class TemplateSettings:
 
 
 @dataclass(frozen=True)
+class EncodeSettings:
+    """Effective encode settings for one job, resolved from a template per clip.
+
+    Matches the ``settings`` object of the controller claim contract
+    (docs/architecture.md) and the plan.md motorcycle defaults (issue #4).
+    """
+
+    output_height: int = 720
+    video_bitrate_kbps: int = 800
+    audio_bitrate_kbps: int = 96
+    audio_codec: str = "aac"
+    ffmpeg_preset: str = "medium"
+
+    def __post_init__(self) -> None:
+        if self.output_height < 2 or self.output_height % 2:
+            raise ValueError(
+                f"output_height must be a positive even number, got {self.output_height}"
+            )
+        if self.video_bitrate_kbps <= 0:
+            raise ValueError(f"video_bitrate_kbps must be positive, got {self.video_bitrate_kbps}")
+        if self.audio_bitrate_kbps <= 0:
+            raise ValueError(f"audio_bitrate_kbps must be positive, got {self.audio_bitrate_kbps}")
+
+
+@dataclass(frozen=True)
 class ArchiveRoot:
     """A registered archive root as this machine sees it."""
 
@@ -134,6 +159,7 @@ class MediaStream:
     width: int | None = None
     height: int | None = None
     channels: int | None = None
+    codec_tag: str | None = None
     tags: Mapping[str, str] = field(default_factory=dict)
 
 

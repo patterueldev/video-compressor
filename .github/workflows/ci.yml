@@ -6,6 +6,7 @@ on:
 
 jobs:
   lint-and-test:
+    name: lint + unit tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -20,4 +21,19 @@ jobs:
       - name: Lint
         run: ruff check .
       - name: Test
-        run: pytest
+        run: pytest -m "not slow"
+
+  integration-test:
+    name: integration tests (ffmpeg)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Install package
+        run: python -m pip install -e ".[dev]"
+      - name: Integration tests
+        run: pytest -m slow
