@@ -25,7 +25,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from videocompressor.controller.constants import (
     ACTIVE_STATES,
@@ -41,9 +40,11 @@ from videocompressor.controller.constants import (
 )
 from videocompressor.controller.memory_manifest import MemoryManifest
 from videocompressor.controller.store import ControllerStore, EventRow, RunRow, WorkerRow
+from videocompressor.core.capture_time import bucket_for
 from videocompressor.core.config import DEFAULT_TEMPLATE_NAME
 from videocompressor.core.manifest import Manifest
 from videocompressor.core.models import (
+    Bucket,
     Classification,
     ClipRecord,
     Fingerprint,
@@ -525,14 +526,22 @@ class ControllerServer:
     def sweep_once(self) -> None:
         """One housekeeping pass: reconcile expired leases and mark offline workers."""
         with self._lock:
+            # reconcile() clears the worker on recovered clips; keep who held them
+            # so the run log can name the node that lost its lease.
+            held = {
+                (record.root_id, record.relative_path): record.worker_id
+                for record in self.manifest.list_clips()
+                if record.worker_id is not None
+            }
             recovered = self.manifest.reconcile()
             for record in recovered:
+                prior_worker = held.get((record.root_id, record.relative_path))
                 if record.state is JobState.REVIEW:
                     self._event(
                         "warning",
                         f"{record.relative_path} parked in review:"
                         " lease expired during replacement, recovery required",
-                        worker_id=record.worker_id,
+                        worker_id=prior_worker,
                         root_id=record.root_id,
                         relative_path=record.relative_path,
                     )
@@ -540,6 +549,7 @@ class ControllerServer:
                     self._event(
                         "warning",
                         f"requeued {record.relative_path}: lease expired",
+                        worker_id=prior_worker,
                         root_id=record.root_id,
                         relative_path=record.relative_path,
                     )
@@ -547,6 +557,7 @@ class ControllerServer:
                     self._event(
                         "info",
                         f"reconciled {record.relative_path} to {record.state}",
+                        worker_id=prior_worker,
                         root_id=record.root_id,
                         relative_path=record.relative_path,
                     )
@@ -607,10 +618,17 @@ class ControllerServer:
         when = record.capture_time.when if record.capture_time is not None else None
         evening = False
         if when is not None:
-            if when.tzinfo is not None:
-                with contextlib.suppress(ZoneInfoNotFoundError):
-                    when = when.astimezone(ZoneInfo(template.timezone))
-            evening = when.time() >= template.evening_start
+            try:
+                bucket = bucket_for(
+                    when,
+                    evening_start=template.evening_start,
+                    timezone=template.timezone,
+                )
+            except ValueError as exc:
+                raise ControllerError(
+                    500, "bad_config", f"invalid template timezone: {exc}"
+                ) from exc
+            evening = bucket is Bucket.EVENING
         return {
             "output_height": template.output_height,
             "video_bitrate_kbps": (

@@ -26,6 +26,8 @@ def test_expired_lease_requeues_and_releases_worker(server, api, clock, seed_cli
     assert record.worker_id is None
     assert _messages(store, "lease expired") == [f"requeued {CLIP}: lease expired"]
     assert _messages(store, "offline") == ["worker homeserver offline"]
+    expired = [event for event in store.list_events() if "lease expired" in event.message]
+    assert [event.worker_id for event in expired] == ["homeserver"]
 
     # an offline worker's job becomes claimable after reconciliation
     api.register("other")
@@ -70,7 +72,8 @@ def test_expired_during_replacing_parks_in_review(server, api, clock, seed_clip,
     record = manifest.list_clips()[0]
     assert record.state is JobState.REVIEW
     assert "recovery required" in (record.error or "")
-    assert any("parked in review" in message for message in _messages(store, "parked"))
+    parked = [event for event in store.list_events() if "parked in review" in event.message]
+    assert parked and parked[0].worker_id == "a"
 
     # a review-parked clip is not claimable
     api.register("b")

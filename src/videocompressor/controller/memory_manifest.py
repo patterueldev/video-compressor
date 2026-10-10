@@ -115,8 +115,9 @@ class MemoryManifest(Manifest):
         """Recover expired leases; returns every recovered record.
 
         Records that expired before the replacement stage are requeued; one that
-        expired during ``replacing`` parks in ``review`` (recovery required).
-        The controller logs each returned record by its resulting state.
+        expired during ``replacing`` parks in ``review`` (recovery required) and
+        keeps its worker id for diagnosis. The controller logs each returned
+        record by its resulting state.
         """
         recovered: list[ClipRecord] = []
         with self._lock:
@@ -132,7 +133,6 @@ class MemoryManifest(Manifest):
                     updated = replace(
                         record,
                         state=JobState.REVIEW,
-                        worker_id=None,
                         error="lease expired during replacement; recovery required",
                         updated_at=now,
                     )

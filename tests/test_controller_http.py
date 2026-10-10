@@ -190,22 +190,25 @@ def test_summary_live_and_for_finished_run(server, api, seed_clip):
     seed_clip("failed.MP4", state=JobState.FAILED)
     seed_clip("review.MP4", state=JobState.REVIEW)
     seed_clip("skipped.MP4", classification=Classification.COMPLETE)
+    # a COMPLETE-classified clip keeps counting as skipped while it is active
+    seed_clip("skipped-active.MP4", state=JobState.ENCODING, classification=Classification.COMPLETE)
 
     run = server.start_run()
     finished = server.finish_run()
     assert finished["run_id"] == run["run_id"]
     assert finished["completed"] == 1
-    assert finished["skipped"] == 1
+    assert finished["skipped"] == 2
     assert finished["failed"] == 1
     assert finished["review"] == 1
 
     status, body = api.get(f"/summary?run_id={run['run_id']}")
     assert status == 200
-    assert body["completed"] == 1 and body["skipped"] == 1
+    assert body["completed"] == 1 and body["skipped"] == 2
     assert body["run_id"] == run["run_id"]
 
     status, body = api.get("/summary")
-    assert status == 200 and body["run_id"] is None and body["completed"] == 1
+    assert status == 200 and body["run_id"] is None
+    assert (body["completed"], body["skipped"], body["failed"], body["review"]) == (1, 2, 1, 1)
 
     status, body = api.get("/summary?run_id=missing")
     assert status == 404 and body["error"]["code"] == "unknown_run"
