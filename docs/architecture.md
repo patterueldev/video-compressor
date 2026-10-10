@@ -21,8 +21,9 @@ Rules:
 - Only `gui` imports PySide6, and PySide6 is installed only through the `gui` extra; CI and the
   worker never need it.
 - CLI subcommands are stubs until their owning issue lands; each exits with code 2 and a clear
-  "not implemented" message. `vc probe` (issue #2) is implemented and read-only: it probes one
-  clip and reports its capture time, timezone mode, day/evening bucket, and review reason.
+  "not implemented" message. `vc probe` (issue #2) and `vc scan` (issue #3) are implemented and
+  read-only: `probe` reports one clip's capture time, mode, bucket, and review reason; `scan`
+  classifies a footage folder and writes only its dry-run report.
 
 ## Data flow
 
@@ -34,6 +35,28 @@ The GUI process is the controller and owns the durable queue and manifest while 
 Workers pull jobs and resolve each job's archive-relative path through their own configured
 archive-root mapping, so the same relative path works on the Mac, another computer, or the Linux
 homeserver.
+
+## Archive scan artifacts (issue #3)
+
+- The manifest is keyed by `root_id` + archive-root-relative POSIX path. Until roots are
+  registered (issue #8), the CLI derives a stable `root_id` from the resolved root path and can
+  pin one with `vc scan --root-id`; scans only ever read inside the root (symlinked files and
+  directories are skipped).
+- `core/scan.py` classifies each clip as new, complete, changed, or review. A dry run writes
+  only its report: the manifest is opened read-only and folder markers are never written by a
+  scan.
+- Completion is confirmed by size + sampled digest rather than mtime, because modification-time
+  precision differs between SMB mounts and local filesystems. Either the central manifest or the
+  per-folder `manifest.json` marker (written by the replacement pipeline in #5/#6) is enough to
+  skip a valid completed clip: losing one source of truth never forces a re-encode, and a later
+  template change never invalidates a completed clip. A recorded completion that no longer
+  matches is `changed` and goes to review, never a silent replace.
+- Capture times come from issue #2's resolver (`core/capture_time.py`) through the `core/scan.py`
+  inspector; missing or conflicting timestamps route clips to review. Tests inject fake inspectors
+  or fake probe results, so the scan suite stays ffprobe-free.
+- The manifest `events` table (seq/at/level/message) is the run-log reference backing the
+  controller `GET /api/v1/events` contract. `LEASE_TTL_SECONDS` (90) and
+  `HEARTBEAT_INTERVAL_SECONDS` (15) live in `core/manifest.py`.
 
 ## Access-transport seam
 

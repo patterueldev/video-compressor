@@ -22,10 +22,17 @@ DEFAULT_TEMPLATE_NAME = "motorcycle"
 
 CONFIG_FILENAME = "config.toml"
 
+MANIFEST_FILENAME = "manifest.sqlite"
+
 
 def default_config_path() -> Path:
     """Return the per-user config path for this app."""
     return Path.home() / "Library" / "Application Support" / "Video Compressor" / CONFIG_FILENAME
+
+
+def default_manifest_path() -> Path:
+    """Return the per-user manifest database path for this app."""
+    return default_config_path().parent / MANIFEST_FILENAME
 
 
 @dataclass
