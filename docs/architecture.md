@@ -34,6 +34,27 @@ Workers pull jobs and resolve each job's archive-relative path through their own
 archive-root mapping, so the same relative path works on the Mac, another computer, or the Linux
 homeserver.
 
+## Archive scan artifacts (issue #3)
+
+- The manifest is keyed by `root_id` + archive-root-relative POSIX path. Until roots are
+  registered (issue #8), the CLI derives a stable `root_id` from the resolved root path and can
+  pin one with `vc scan --root-id`; scans only ever read inside the root (symlinked files and
+  directories are skipped).
+- `core/scan.py` classifies each clip as new, complete, changed, or review. A dry run writes
+  only its report: the manifest is opened read-only and folder markers are never written by a
+  scan.
+- Completion is confirmed by size + sampled digest rather than mtime, because modification-time
+  precision differs between SMB mounts and local filesystems. Either the central manifest or the
+  per-folder `manifest.json` marker (written by the replacement pipeline in #5/#6) is enough to
+  skip a valid completed clip: losing one source of truth never forces a re-encode, and a later
+  template change never invalidates a completed clip. A recorded completion that no longer
+  matches is `changed` and goes to review, never a silent replace.
+- Capture-time resolution belongs to issue #2. Scans take an injectable inspector; until #2
+  lands, inspected clips are marked review-needed instead of trusted.
+- The manifest `events` table (seq/at/level/message) is the run-log reference backing the
+  controller `GET /api/v1/events` contract. `LEASE_TTL_SECONDS` (90) and
+  `HEARTBEAT_INTERVAL_SECONDS` (15) live in `core/manifest.py`.
+
 ## Access-transport seam
 
 Everything above the seam works with local file paths only. The worker pipeline reaches the
