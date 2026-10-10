@@ -24,8 +24,8 @@ Rules:
   "not implemented" message. `vc probe` (issue #2) and `vc scan` (issue #3) are implemented and
   read-only: `probe` reports one clip's capture time, mode, bucket, and review reason; `scan`
   classifies a footage folder and writes only its dry-run report. `vc controller` (issue #7)
-  serves the controller contract below; `vc gui` (issue #8) launches the GUI; `worker` stays a
-  stub until issue #6.
+  serves the controller contract below; `vc gui` (issue #8) launches the GUI; `worker` (issue #6)
+  runs the node agent.
 - These rules are enforced statically by `tests/test_architecture.py`: cross-package import
   direction (the table above), PySide6 only under `gui/`, and the file-size budgets with their
   shrink-only allowlist.
@@ -42,7 +42,10 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   (payload rules), `constants`.
 - `gui`: `app`, `main_window`, `drop_zone`, `roots_panel`, `templates_panel`, `clip_tables`, and
   `scan_runner` widgets plus the pure Python `state` and `scan_service` (issue #8; #9 adds the
-  monitor); `worker`: package stub reserved for issue #6.
+  monitor).
+- `worker`: `agent` (register/heartbeat/claim loop and stop), `client` (controller HTTP v1),
+  `pipeline` (per-job copy → encode → validate → replace), `transfer` (pilot delivery and
+  replacement confirm), `config` (per-node TOML), `scratch` (local job dirs).
 - `cli`: `app` (parser + command registry), one module per subcommand (`probe`, `scan`,
   `worker`, `controller`, `gui`), `constants` (exit codes).
 
@@ -50,7 +53,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
 
 `tests/conftest.py` is a registrar only: fixture groups live in `tests/fixtures/<domain>.py` and
 are registered through `pytest_plugins`. Suites are the top-level `tests/test_*.py` files and
-`tests/cli/**`; `tests/worker/**` (issue #6) and `tests/gui/**` (issue #8) are reserved.
+`tests/cli/**`; `tests/worker/**` (issue #6) and `tests/gui/**` (issue #8) hold the per-area
+suites.
 `tests/test_imports.py` checks that every module imports without the `gui` extra;
 `tests/test_architecture.py` checks cross-package import direction and file-size budgets
 (`src/**` ≤ 400 lines, `tests/**` ≤ 450). The audited over-budget files may only shrink:
