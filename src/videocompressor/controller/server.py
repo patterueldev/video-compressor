@@ -6,8 +6,8 @@ endpoints documented there (``GET /workers``, ``GET /summary``, worker
 :class:`ControllerServer`, so the GUI can host the controller and call it
 directly while worker nodes use HTTP.
 
-The durable queue is the manifest (``core/manifest.py``); while issue #3 is
-unimplemented the server can be constructed against :class:`MemoryManifest`.
+The durable queue is the SQLite manifest (``core/manifest.py``, issue #3);
+tests inject :class:`MemoryManifest` when they want a lightweight double.
 """
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from videocompressor.controller.constants import (
-    ACTIVE_STATES,
     EVENTS_PAGE_LIMIT,
     EVENTS_PAGE_MAX,
     HEARTBEAT_INTERVAL_SECONDS,
+    LEASE_STATES,
     LEASE_TTL_SECONDS,
     MAX_BODY_BYTES,
     SWEEP_INTERVAL_SECONDS,
@@ -42,7 +42,7 @@ from videocompressor.controller.memory_manifest import MemoryManifest
 from videocompressor.controller.store import ControllerStore, EventRow, RunRow, WorkerRow
 from videocompressor.core.capture_time import bucket_for
 from videocompressor.core.config import DEFAULT_TEMPLATE_NAME
-from videocompressor.core.manifest import Manifest
+from videocompressor.core.manifest import LeaseError, Manifest
 from videocompressor.core.models import (
     Bucket,
     Classification,
@@ -97,10 +97,11 @@ def open_manifest(
     clock: Clock = system_now,
     lease_ttl_seconds: int = LEASE_TTL_SECONDS,
 ) -> tuple[Manifest, bool]:
-    """Open the queue manifest, falling back to the in-memory stub.
+    """Open the queue manifest, falling back to the in-memory double.
 
-    Returns ``(manifest, durable)``; ``durable`` is False while issue #3's
-    SQLite manifest is still unimplemented and the stub is in use.
+    The SQLite manifest (issue #3) is preferred; the in-memory double keeps
+    ``vc controller`` usable (with a warning) if the manifest is unavailable.
+    Returns ``(manifest, durable)``.
     """
     try:
         return Manifest.open(db_path), True
@@ -264,14 +265,21 @@ class ControllerServer:
                 if (
                     record is None
                     or record.worker_id != worker_id
-                    or record.state not in ACTIVE_STATES
+                    or record.state not in LEASE_STATES
                 ):
                     raise ControllerError(
                         409,
                         "lease_conflict",
                         f"worker {worker_id!r} does not hold {root_id}:{relative_path}",
                     )
-                self.manifest.heartbeat(root_id, relative_path, worker_id)
+                try:
+                    self.manifest.heartbeat(root_id, relative_path, worker_id)
+                except LeaseError:
+                    raise ControllerError(
+                        409,
+                        "lease_conflict",
+                        f"worker {worker_id!r} does not hold {root_id}:{relative_path}",
+                    ) from None
                 self._progress[worker_id] = {
                     "active": {"root_id": root_id, "relative_path": relative_path},
                     "progress": dict(progress) if isinstance(progress, Mapping) else None,
@@ -526,38 +534,41 @@ class ControllerServer:
     def sweep_once(self) -> None:
         """One housekeeping pass: reconcile expired leases and mark offline workers."""
         with self._lock:
-            # reconcile() clears the worker on recovered clips; keep who held them
-            # so the run log can name the node that lost its lease.
-            held = {
-                (record.root_id, record.relative_path): record.worker_id
+            # Manifest.reconcile() returns the clips parked in review; requeues
+            # are detected from the resulting state changes. Snapshot first so
+            # the run log can name the worker that held each recovered clip.
+            before = {
+                (record.root_id, record.relative_path): (record.state, record.worker_id)
                 for record in self.manifest.list_clips()
-                if record.worker_id is not None
             }
             recovered = self.manifest.reconcile()
+            review_keys: set[tuple[str, str]] = set()
             for record in recovered:
-                prior_worker = held.get((record.root_id, record.relative_path))
-                if record.state is JobState.REVIEW:
-                    self._event(
-                        "warning",
-                        f"{record.relative_path} parked in review:"
-                        " lease expired during replacement, recovery required",
-                        worker_id=prior_worker,
-                        root_id=record.root_id,
-                        relative_path=record.relative_path,
-                    )
-                elif record.state is JobState.QUEUED:
+                key = (record.root_id, record.relative_path)
+                review_keys.add(key)
+                prior = before.get(key)
+                worker_id = record.worker_id or (prior[1] if prior is not None else None)
+                self._event(
+                    "warning",
+                    f"{record.relative_path} parked in review:"
+                    " lease expired during replacement, recovery required",
+                    worker_id=worker_id,
+                    root_id=record.root_id,
+                    relative_path=record.relative_path,
+                )
+            for record in self.manifest.list_clips():
+                key = (record.root_id, record.relative_path)
+                prior = before.get(key)
+                if (
+                    key not in review_keys
+                    and record.state is JobState.QUEUED
+                    and prior is not None
+                    and prior[0] in LEASE_STATES
+                ):
                     self._event(
                         "warning",
                         f"requeued {record.relative_path}: lease expired",
-                        worker_id=prior_worker,
-                        root_id=record.root_id,
-                        relative_path=record.relative_path,
-                    )
-                else:  # pragma: no cover - defensive for future manifest semantics
-                    self._event(
-                        "info",
-                        f"reconciled {record.relative_path} to {record.state}",
-                        worker_id=prior_worker,
+                        worker_id=prior[1],
                         root_id=record.root_id,
                         relative_path=record.relative_path,
                     )
@@ -581,14 +592,11 @@ class ControllerServer:
     # -- internals ---------------------------------------------------------
 
     def _find_clip(self, root_id: str, relative_path: str) -> ClipRecord | None:
-        for record in self.manifest.list_clips():
-            if record.root_id == root_id and record.relative_path == relative_path:
-                return record
-        return None
+        return self.manifest.get_clip(root_id, relative_path)
 
     def _find_active_clip(self, worker_id: str) -> ClipRecord | None:
         for record in self.manifest.list_clips():
-            if record.worker_id == worker_id and record.state in ACTIVE_STATES:
+            if record.worker_id == worker_id and record.state in LEASE_STATES:
                 return record
         return None
 
@@ -599,7 +607,7 @@ class ControllerServer:
         record = self._find_clip(root_id, relative_path)
         if record is None:
             raise ControllerError(404, "unknown_job", f"no job for {root_id}:{relative_path}")
-        if record.worker_id != worker_id or record.state not in ACTIVE_STATES:
+        if record.worker_id != worker_id or record.state not in LEASE_STATES:
             raise ControllerError(
                 409,
                 "lease_conflict",
@@ -647,7 +655,7 @@ class ControllerServer:
         if not isinstance(phase, str):
             return
         target = _PHASE_STATES.get(phase.lower())
-        if target is None or target not in ACTIVE_STATES or target is record.state:
+        if target is None or target not in LEASE_STATES or target is record.state:
             return
         if _STAGE_ORDER.index(target) <= _STAGE_ORDER.index(record.state):
             return

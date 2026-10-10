@@ -1,7 +1,8 @@
 """Controller protocol constants and shared helpers.
 
-The v1 contract fixes the lease and heartbeat intervals (``docs/architecture.md``):
-a claim starts a 90 s lease and workers renew every 15 s.
+The lease constants are owned by ``core/manifest.py`` (the SQLite manifest is
+the source of truth for lease behavior); this module re-exports them and adds
+the controller's own HTTP/sweep constants.
 """
 
 from __future__ import annotations
@@ -10,23 +11,26 @@ import re
 from collections.abc import Callable
 from datetime import datetime
 
-from videocompressor.core.models import JobState
-
-LEASE_TTL_SECONDS = 90
-HEARTBEAT_INTERVAL_SECONDS = 15
-SWEEP_INTERVAL_SECONDS = 5
-
-#: Jobs in these states are held by a worker under a live (or expired) lease.
-ACTIVE_STATES = frozenset(
-    {
-        JobState.CLAIMED,
-        JobState.COPIED,
-        JobState.ENCODING,
-        JobState.VALIDATED,
-        JobState.TRANSFERRING,
-        JobState.REPLACING,
-    }
+from videocompressor.core.manifest import (
+    HEARTBEAT_INTERVAL_SECONDS,
+    LEASE_STATES,
+    LEASE_TTL_SECONDS,
 )
+
+__all__ = [
+    "EVENTS_PAGE_LIMIT",
+    "EVENTS_PAGE_MAX",
+    "HEARTBEAT_INTERVAL_SECONDS",
+    "LEASE_STATES",
+    "LEASE_TTL_SECONDS",
+    "MAX_BODY_BYTES",
+    "SWEEP_INTERVAL_SECONDS",
+    "WORKER_ID_PATTERN",
+    "Clock",
+    "system_now",
+]
+
+SWEEP_INTERVAL_SECONDS = 5
 
 #: Worker ids match this pattern (``docs/architecture.md``).
 WORKER_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")

@@ -131,6 +131,11 @@ def build_parser() -> argparse.ArgumentParser:
                 "--db", type=Path, help="controller database path (default: the per-user path)"
             )
             subparser.add_argument(
+                "--manifest",
+                type=Path,
+                help="manifest database (default: the per-user path)",
+            )
+            subparser.add_argument(
                 "--print-token",
                 action="store_true",
                 help="print the access token (generating one if needed) and exit",
@@ -182,7 +187,7 @@ def _run_controller(args: argparse.Namespace) -> int:
     host = args.host or config.controller.host
     port = args.port if args.port is not None else config.controller.port
     store = ControllerStore.open(args.db or default_db_path())
-    manifest_path = default_manifest_path()
+    manifest_path = args.manifest if args.manifest is not None else default_manifest_path()
     manifest, durable = open_manifest(manifest_path)
     server = ControllerServer(
         store=store,

@@ -200,7 +200,9 @@ class Manifest:
         """
         if create:
             db_path.parent.mkdir(parents=True, exist_ok=True)
-            connection = sqlite3.connect(db_path)
+            # The controller serves HTTP in worker threads and the GUI hosts it
+            # in-process; concurrent access is serialized by the caller's lock.
+            connection = sqlite3.connect(db_path, check_same_thread=False)
         else:
             connection = sqlite3.connect(f"file:{quote(str(db_path))}?mode=ro", uri=True)
         connection.isolation_level = None  # explicit transactions only

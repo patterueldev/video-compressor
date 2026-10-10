@@ -58,11 +58,6 @@ def default_db_path() -> Path:
     return default_config_path().parent / "controller.sqlite"
 
 
-def default_manifest_path() -> Path:
-    """Default manifest path (issue #3 owns its schema)."""
-    return default_config_path().parent / "manifest.sqlite"
-
-
 @dataclass(frozen=True)
 class WorkerRow:
     """One registered worker node."""

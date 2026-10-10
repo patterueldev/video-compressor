@@ -23,7 +23,8 @@ Rules:
 - CLI subcommands are stubs until their owning issue lands; each exits with code 2 and a clear
   "not implemented" message. `vc probe` (issue #2) and `vc scan` (issue #3) are implemented and
   read-only: `probe` reports one clip's capture time, mode, bucket, and review reason; `scan`
-  classifies a footage folder and writes only its dry-run report.
+  classifies a footage folder and writes only its dry-run report. `vc controller` (issue #7)
+  serves the controller contract below; `worker` and `gui` remain stubs.
 
 ## Data flow
 
@@ -54,9 +55,10 @@ homeserver.
 - Capture times come from issue #2's resolver (`core/capture_time.py`) through the `core/scan.py`
   inspector; missing or conflicting timestamps route clips to review. Tests inject fake inspectors
   or fake probe results, so the scan suite stays ffprobe-free.
-- The manifest `events` table (seq/at/level/message) is the run-log reference backing the
-  controller `GET /api/v1/events` contract. `LEASE_TTL_SECONDS` (90) and
-  `HEARTBEAT_INTERVAL_SECONDS` (15) live in `core/manifest.py`.
+- The manifest `events` table (seq/at/level/message) records engine-level events; the controller
+  keeps its per-run log (worker and run tagging) in its own database, served by
+  `GET /api/v1/events`. `LEASE_TTL_SECONDS` (90) and `HEARTBEAT_INTERVAL_SECONDS` (15) live in
+  `core/manifest.py` and are re-exported by `controller/constants.py`.
 
 ## Access-transport seam
 
@@ -271,10 +273,10 @@ Monitoring and stop/resume additions; every v1 payload above stays valid.
 #### Lease sweep and reconciliation
 
 The controller sweeps every 5 s: workers silent for 90 s flip to offline, and expired job leases
-are recovered through `Manifest.reconcile()`. A clip that expired before its `replacing` stage
-is requeued; a clip that expired during `replacing` parks in `review` until the issue #5
-recovery protocol confirms the source/backup state. Nothing is claimable twice while a live
-lease or unresolved recovery exists.
+are recovered through `Manifest.reconcile()`. Clips that expired in the copy/encode stages are
+requeued; clips in the replacement stages (`validated`, `transferring`, `replacing`) park in
+`review` until the issue #5 recovery protocol confirms the source/backup state. Nothing is
+claimable twice while a live lease or unresolved recovery exists.
 
 Payloads are intentionally minimal: adding optional fields is backwards compatible; removing or
 renaming a field requires contract v2.

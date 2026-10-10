@@ -71,7 +71,7 @@ def test_expired_during_replacing_parks_in_review(server, api, clock, seed_clip,
 
     record = manifest.list_clips()[0]
     assert record.state is JobState.REVIEW
-    assert "recovery required" in (record.error or "")
+    assert "reconcile the source" in (record.error or "")
     parked = [event for event in store.list_events() if "parked in review" in event.message]
     assert parked and parked[0].worker_id == "a"
 
