@@ -220,29 +220,21 @@ class FakeMonitorClient:
 
 
 class FakeSession:
-    """Stand-in for ``MonitorSession`` (panel and window tests)."""
+    """Stand-in for ``MonitorSession`` (panel tests)."""
 
     def __init__(
         self,
         snapshot: MonitorSnapshot | None = None,
         *,
-        description: str = "hosting controller at http://127.0.0.1:8765",
-        hosted: bool = True,
         stop_error: Exception | None = None,
         resume_error: Exception | None = None,
     ) -> None:
         self._snapshot = snapshot if snapshot is not None else make_snapshot()
-        self.description = description
-        self.hosted = hosted
         self.stop_error = stop_error
         self.resume_error = resume_error
         self.stops: list[str] = []
         self.resumes: list[str] = []
         self.snapshot_calls = 0
-        self.closed = 0
-
-    def close(self) -> None:
-        self.closed += 1
 
     def snapshot(self) -> MonitorSnapshot:
         self.snapshot_calls += 1
@@ -267,3 +259,22 @@ class FakeSession:
             if (relative_path is None or event.relative_path == relative_path)
             and (worker_id is None or event.worker_id == worker_id)
         )
+
+
+class FakeControllerSession:
+    """Stand-in for ``ControllerSession`` (window tests): client and lifecycle."""
+
+    def __init__(
+        self,
+        client: FakeMonitorClient | None = None,
+        *,
+        hosted: bool = True,
+        description: str = "hosting controller at http://127.0.0.1:8765",
+    ) -> None:
+        self.client = client if client is not None else FakeMonitorClient()
+        self.hosted = hosted
+        self.description = description
+        self.closed = 0
+
+    def close(self) -> None:
+        self.closed += 1

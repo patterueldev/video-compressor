@@ -17,6 +17,7 @@ from videocompressor.core.config import AppConfig
 from videocompressor.gui.controller_session import ControllerSession
 from videocompressor.gui.main_window import MainWindow
 from videocompressor.gui.monitor_panel import MonitorPanel
+from videocompressor.gui.monitor_service import MonitorSession
 
 __all__ = ["MonitorWindow"]
 
@@ -57,7 +58,11 @@ class MonitorWindow(QMainWindow):
         self.monitor = (
             panel
             if panel is not None
-            else MonitorPanel(session, description=session.description, parent=self)
+            else MonitorPanel(
+                MonitorSession(session.client),
+                description=session.description,
+                parent=self,
+            )
         )
         self.tabs = QTabWidget(self)
         self.tabs.addTab(self.library, "Library")

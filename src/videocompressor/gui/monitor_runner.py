@@ -81,9 +81,15 @@ class MonitorRunner(QObject):
             snapshot = self._fetch()
         except Exception as error:  # surfaced to the user through the runner
             if self._active:
-                self.failed.emit(describe_monitor_error(error))
+                try:
+                    self.failed.emit(describe_monitor_error(error))
+                except RuntimeError:  # the window was destroyed mid-fetch
+                    pass
         else:
             if self._active:
-                self.updated.emit(snapshot)
+                try:
+                    self.updated.emit(snapshot)
+                except RuntimeError:  # the window was destroyed mid-fetch
+                    pass
         finally:
             self._busy = False

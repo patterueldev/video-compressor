@@ -15,7 +15,7 @@ from gui.monitor_support import (
     make_snapshot,
     make_worker,
 )
-from gui.monitor_support_qt import FakeMonitorRunner
+from gui.monitor_support_qt import FakeMonitorRunner, dispose
 from videocompressor.controller.protocol import ControllerError
 from videocompressor.gui.monitor_panel import MonitorPanel
 
@@ -60,6 +60,7 @@ def test_panel_starts_polling_and_renders_a_snapshot(qapp):
         assert "hosting controller" in panel.description_label.text()
     finally:
         panel.shutdown()
+        dispose(panel)
     assert runner.stopped == 1
 
 
@@ -82,6 +83,7 @@ def test_selection_enables_stop_and_filters_the_job_log(qapp):
         assert not panel.resume_button.isEnabled()
     finally:
         panel.shutdown()
+        dispose(panel)
 
 
 def test_stop_and_resume_call_the_session_and_refresh(qapp):
@@ -106,6 +108,7 @@ def test_stop_and_resume_call_the_session_and_refresh(qapp):
         assert runner.refreshes == 2
     finally:
         panel.shutdown()
+        dispose(panel)
 
 
 def test_action_failures_go_to_the_status_line(qapp):
@@ -123,6 +126,7 @@ def test_action_failures_go_to_the_status_line(qapp):
         )
     finally:
         panel.shutdown()
+        dispose(panel)
 
 
 def test_runner_signals_drive_the_panel(qapp):
@@ -135,6 +139,7 @@ def test_runner_signals_drive_the_panel(qapp):
         assert "unreachable" in panel.status_label.text()
     finally:
         panel.shutdown()
+        dispose(panel)
 
 
 def test_has_active_jobs_tracks_the_snapshot(qapp):
@@ -147,3 +152,4 @@ def test_has_active_jobs_tracks_the_snapshot(qapp):
         assert panel.has_active_jobs() is False
     finally:
         panel.shutdown()
+        dispose(panel)

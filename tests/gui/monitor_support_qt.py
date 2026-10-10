@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import shiboken6
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtWidgets import QWidget
 
 from videocompressor.core.config import AppConfig
 from videocompressor.gui.main_window import MainWindow
@@ -69,3 +71,13 @@ def make_library(tmp_path: Path, config: AppConfig, runner: FakeScanRunner) -> M
         manifest_path=tmp_path / "manifest.sqlite",
         runner=runner,  # type: ignore[arg-type]
     )
+
+
+def dispose(widget: QWidget) -> None:
+    """Delete a test widget on the GUI thread.
+
+    Qt widgets left to Python's garbage collector can be destroyed while a pool,
+    controller, or sweep thread runs a collection (which crashes the process);
+    the monitor tests delete their panels and windows explicitly instead.
+    """
+    shiboken6.delete(widget)
