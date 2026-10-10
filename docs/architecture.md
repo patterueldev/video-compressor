@@ -108,8 +108,9 @@ archive through three primitive operations, implemented against the worker's res
 | `replace(temp_path, relative_path)` | Fingerprint pre-check → rename source to a recoverable backup → atomic rename temp into place → confirm readable → delete backup. |
 
 v1 implements these directly on the worker-local filesystem: the SMB mount on macOS, the local
-ext4 path on the Linux homeserver. A later access-transport decision (issue #13) can add SSH/rsync
-transports behind the same three primitives without touching scan, encode, or replacement logic.
+ext4 path on the Linux homeserver. The access-transport decision (issue #13) kept mounted/local
+paths for every v1 node; the three primitives stay the seam for a possible SSH/rsync transport,
+without touching scan, encode, or replacement logic (rationale in `docs/pilot-notes.md`).
 `replace` is implemented in `core/replace.py` (issue #5); the pipeline wiring in issue #6, with
 `core/recover.py` handling crash reconciliation.
 
