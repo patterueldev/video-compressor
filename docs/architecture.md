@@ -21,7 +21,8 @@ Rules:
 - Only `gui` imports PySide6, and PySide6 is installed only through the `gui` extra; CI and the
   worker never need it.
 - CLI subcommands are stubs until their owning issue lands; each exits with code 2 and a clear
-  "not implemented" message.
+  "not implemented" message. `vc probe` (issue #2) is implemented and read-only: it probes one
+  clip and reports its capture time, timezone mode, day/evening bucket, and review reason.
 
 ## Data flow
 
