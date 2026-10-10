@@ -7,12 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from videocompressor.core.models import EncodeSettings
+from videocompressor.core.models import EncodeSettings, MediaInfo, MediaStream
+from videocompressor.core.probe import ProbeError
 from videocompressor.core.validate import (
     MediaFacts,
-    MediaProbeError,
     duration_tolerance,
     expected_output_width,
+    facts_from_media_info,
     sample_decode_check,
     validate_output,
 )
@@ -129,7 +130,7 @@ def test_audio_presence_must_match_source():
 
 def test_unreadable_output_fails_immediately():
     def probe(path):
-        raise MediaProbeError(f"cannot probe {path}: invalid data")
+        raise ProbeError(f"cannot probe {path}: invalid data")
 
     result = validate_output(
         Path("out.mp4"), SETTINGS, source=SOURCE, probe=probe, decode_check=False
@@ -202,3 +203,34 @@ def test_expected_output_width_rounds_to_even_pixels():
 def test_duration_tolerance_scales_with_long_sources():
     assert duration_tolerance(100.0) == 1.0
     assert duration_tolerance(7200.0) == pytest.approx(7.2)
+
+
+def test_facts_from_media_info_summarizes_probe_output():
+    info = MediaInfo(
+        path=Path("out.mp4"),
+        format_name="mov,mp4,m4a,3gp,3g2,mj2",
+        duration_s=100.0,
+        size_bytes=123,
+        bit_rate=None,
+        format_tags={"creation_time": "2026-01-02T03:04:05.000000Z"},
+        streams=(
+            MediaStream(
+                index=0,
+                codec_type="video",
+                codec_name="hevc",
+                width=1280,
+                height=720,
+                codec_tag="hvc1",
+            ),
+            MediaStream(index=1, codec_type="audio", codec_name="aac", channels=2),
+            MediaStream(index=2, codec_type="data", codec_tag="tmcd"),
+        ),
+    )
+    facts = facts_from_media_info(info)
+    assert facts.path == Path("out.mp4")
+    assert facts.video_codec == "hevc"
+    assert facts.video_codec_tag == "hvc1"
+    assert (facts.width, facts.height) == (1280, 720)
+    assert facts.has_audio
+    assert facts.creation_time == "2026-01-02T03:04:05.000000Z"
+    assert facts.stream_codec_tags == ("hvc1", "tmcd")

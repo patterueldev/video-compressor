@@ -159,6 +159,7 @@ class MediaStream:
     width: int | None = None
     height: int | None = None
     channels: int | None = None
+    codec_tag: str | None = None
     tags: Mapping[str, str] = field(default_factory=dict)
 
 

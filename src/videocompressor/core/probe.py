@@ -154,6 +154,7 @@ def _parse_stream(item: Any, path: Path) -> MediaStream:
         width=_optional_int(item.get("width")),
         height=_optional_int(item.get("height")),
         channels=_optional_int(item.get("channels")),
+        codec_tag=_optional_str(item.get("codec_tag_string")),
         tags=_string_tags(item.get("tags")),
     )
 

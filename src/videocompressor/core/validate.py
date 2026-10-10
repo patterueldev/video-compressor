@@ -1,21 +1,19 @@
 """Output validation for encoded clips, used locally and after transfer back (issue #4).
 
-Validation runs with a self-contained ffprobe reader (:func:`probe_media_facts`).
-When issue #2's ``core.probe.probe_media`` lands, the reader can delegate to it
-without changing this module's checks.
+Media facts come from :mod:`videocompressor.core.probe` (issue #2); this module adds
+the encode-specific checks and the sampled decode pass.
 """
 
 from __future__ import annotations
 
-import json
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from videocompressor.core.models import EncodeSettings
+from videocompressor.core.models import EncodeSettings, MediaInfo
+from videocompressor.core.probe import ProbeError, probe_media
 
-FFPROBE_BIN = "ffprobe"
 FFMPEG_BIN = "ffmpeg"
 
 #: Output duration may differ from the source by a frame or two plus muxer rounding.
@@ -28,10 +26,6 @@ WIDTH_TOLERANCE_PX = 2
 #: Sampled decode check: windows at the start, middle, and near the end.
 DECODE_SAMPLE_SECONDS = 5.0
 DECODE_SAMPLE_FRACTIONS = (0.0, 0.5, 0.9)
-
-
-class MediaProbeError(RuntimeError):
-    """Raised when ffprobe cannot read a file or its output cannot be parsed."""
 
 
 @dataclass(frozen=True)
@@ -60,47 +54,29 @@ class ValidationResult:
     output: MediaFacts | None = None
 
 
-def probe_media_facts(path: Path, *, ffprobe_bin: str = FFPROBE_BIN) -> MediaFacts:
-    """Read the container/stream facts validation needs from ``path``."""
-    command = [
-        ffprobe_bin,
-        "-v",
-        "error",
-        "-print_format",
-        "json",
-        "-show_format",
-        "-show_streams",
-        str(path),
-    ]
-    completed = _run_command(command)
-    if completed.returncode != 0:
-        detail = _one_line(completed.stderr) or f"ffprobe exit {completed.returncode}"
-        raise MediaProbeError(f"cannot probe {path}: {detail}")
-    try:
-        payload = json.loads(completed.stdout or "{}")
-    except json.JSONDecodeError as exc:
-        raise MediaProbeError(f"cannot parse ffprobe output for {path}: {exc}") from exc
-
-    fmt = payload.get("format") or {}
-    streams = payload.get("streams") or []
-    video = next((s for s in streams if s.get("codec_type") == "video"), {})
-    has_audio = any(s.get("codec_type") == "audio" for s in streams)
-    tags = fmt.get("tags") or {}
+def facts_from_media_info(info: MediaInfo) -> MediaFacts:
+    """Summarize a probed :class:`MediaInfo` into the facts validation compares."""
+    video = next((stream for stream in info.streams if stream.codec_type == "video"), None)
     return MediaFacts(
-        path=path,
-        format_name=fmt.get("format_name"),
-        duration_s=_to_float(fmt.get("duration")),
-        size_bytes=_to_int(fmt.get("size")),
-        video_codec=video.get("codec_name"),
-        video_codec_tag=video.get("codec_tag_string"),
-        width=video.get("width"),
-        height=video.get("height"),
-        has_audio=has_audio,
-        creation_time=tags.get("creation_time"),
+        path=info.path,
+        format_name=info.format_name,
+        duration_s=info.duration_s,
+        size_bytes=info.size_bytes,
+        video_codec=video.codec_name if video is not None else None,
+        video_codec_tag=video.codec_tag if video is not None else None,
+        width=video.width if video is not None else None,
+        height=video.height if video is not None else None,
+        has_audio=any(stream.codec_type == "audio" for stream in info.streams),
+        creation_time=info.format_tags.get("creation_time"),
         stream_codec_tags=tuple(
-            tag for stream in streams if (tag := stream.get("codec_tag_string"))
+            stream.codec_tag for stream in info.streams if stream.codec_tag
         ),
     )
+
+
+def probe_media_facts(path: Path) -> MediaFacts:
+    """Probe ``path`` and summarize the facts validation needs."""
+    return facts_from_media_info(probe_media(path))
 
 
 def validate_output(
@@ -126,7 +102,7 @@ def validate_output(
     runner = run if run is not None else _run_command
     try:
         facts = prober(output)
-    except MediaProbeError as exc:
+    except ProbeError as exc:
         return ValidationResult(ok=False, failures=(f"unreadable: {exc}",), output=None)
 
     failures: list[str] = []
@@ -236,17 +212,3 @@ def _one_line(text: str | None) -> str:
     if not text:
         return ""
     return next((line for line in text.splitlines() if line.strip()), "").strip()
-
-
-def _to_float(value: object) -> float | None:
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-
-
-def _to_int(value: object) -> int | None:
-    try:
-        return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
