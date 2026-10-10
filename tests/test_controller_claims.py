@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
+from functools import partial
 from zoneinfo import ZoneInfo
 
 from videocompressor.controller.memory_manifest import MemoryManifest
@@ -19,6 +21,32 @@ from videocompressor.core.models import (
 )
 
 
+def _run_threads(*targets: Callable[[], None]) -> None:
+    """Run targets on threads; re-raise the first unhandled thread failure.
+
+    Thread failures must fail the test deterministically (issue #24): a
+    crashed claim worker can otherwise hide behind pytest's warning-as-error
+    flag, or be masked when other workers cover its clips.
+    """
+    errors: list[BaseException] = []
+    guard = threading.Lock()
+
+    def run(target: Callable[[], None]) -> None:
+        try:
+            target()
+        except BaseException as exc:
+            with guard:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=run, args=(target,)) for target in targets]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    if errors:
+        raise errors[0]
+
+
 def test_concurrent_http_claims_exactly_one_winner(server, api, seed_clip, manifest):
     api.register("a")
     api.register("b")
@@ -31,11 +59,7 @@ def test_concurrent_http_claims_exactly_one_winner(server, api, seed_clip, manif
         barrier.wait()
         results[worker_id] = api.post("/jobs/claim", {"worker_id": worker_id})
 
-    threads = [threading.Thread(target=claim, args=(worker_id,)) for worker_id in ("a", "b")]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    _run_threads(partial(claim, "a"), partial(claim, "b"))
 
     assert sorted(status for status, _ in results.values()) == [200, 204]
     winner = next(worker for worker, (status, _) in results.items() if status == 200)
@@ -69,11 +93,7 @@ def test_many_workers_race_many_clips_exactly_once_each(server, api, seed_clip):
             with guard:
                 collected.append(body["job"]["relative_path"])
 
-    threads = [threading.Thread(target=process, args=(f"w{index}",)) for index in range(6)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    _run_threads(*(partial(process, f"w{index}") for index in range(6)))
 
     assert sorted(collected) == sorted(expected)
     assert len(collected) == len(set(collected)) == len(expected)
