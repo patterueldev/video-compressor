@@ -7,4 +7,5 @@ dotted module path to ``pytest_plugins`` below; never grow this file.
 pytest_plugins = [
     "fixtures.controller",
     "fixtures.media",
+    "fixtures.worker",
 ]
