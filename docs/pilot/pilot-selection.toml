@@ -1,0 +1,33 @@
+# Pilot clip selection for issue #12 (sanitized: archive-relative paths only).
+# Capture times and buckets come from the issue #11 dry-run reports, never from
+# file names (the MOTORCYCLE names run 8 h ahead). `shots` are filled in during
+# pilot execution after reviewing extracted frames; crops are pixel windows in
+# the 720p reference frame.
+
+[[clips]]
+relative_path = "VIDEOS/MOTORCYCLE/202506022316_GH040778.MP4"   # ~83 s, 314 MB, 15:16
+category = "daytime"
+bucket = "daytime"
+candidates = [600, 800, 1000, 1200]
+shots = []
+
+[[clips]]
+relative_path = "VIDEOS/MOTORCYCLE/202506040259_GX020780.MP4"   # ~100 s, 567 MB, 18:59
+category = "evening"
+bucket = "evening"
+candidates = [800, 1000, 1200, 1600]
+shots = []
+
+[[clips]]
+relative_path = "VIDEOS/MOTORCYCLE/20250727073400_GX010805.MP4" # ~52 s, 284 MB, 23:34 (dark)
+category = "dim"
+bucket = "evening"
+candidates = [800, 1000, 1200, 1600]
+shots = []
+
+[[clips]]
+relative_path = "VIDEOS/MOTORCYCLE/202505262032_GX050764.MP4"   # ~58 s, 329 MB, 12:32
+category = "motion-heavy"
+bucket = "daytime"
+candidates = [600, 800, 1000, 1200]
+shots = []
