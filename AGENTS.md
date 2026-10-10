@@ -27,6 +27,32 @@ The processing engine must stay independent of the GUI (plan.md requirement). Se
 - Task PRs target `main`; never merge without the operator's explicit go-ahead.
 - Do not expand issue scope; hand discovered bugs back to the issue tracker.
 
+## Parallel work (wave 2)
+
+Wave-2 issues run in parallel; land changes only in the area you own.
+
+| Issue | Owns |
+| --- | --- |
+| #6 worker agent | `src/videocompressor/worker/**`, `src/videocompressor/cli/worker.py`, `tests/worker/**` |
+| #8 GUI foundation | `src/videocompressor/gui/**`, `src/videocompressor/cli/gui.py`, `src/videocompressor/core/config.py` additions, `tests/gui/**` |
+| #11 pilot dry run | `docs/pilot-notes.md` |
+
+The worker's per-node config file lives under `worker/**` (#6); additions to the per-user
+config belong to #8. Additions to `core/**` outside #8's config scope need a docs change first.
+
+Shared append points — single-line additions only:
+
+- `tests/conftest.py` — append your fixture domain to `pytest_plugins`; never grow the file.
+- `docs/architecture.md` — add your module to the module map when you add one.
+- `tests/test_architecture.py` — size-allowlist entries; numbers may only move down.
+
+Rules:
+
+- Extend by adding a module, not by growing a shared one. Source files stay ≤ 400 lines and
+  test files ≤ 450; `tests/test_architecture.py` enforces both.
+- Keep append points to single-line additions; never refactor another issue's area in your PR.
+- Rebase on `main` before opening a PR.
+
 ## Validation
 
 ```sh
@@ -36,3 +62,6 @@ pytest
 
 Integration tests that need ffmpeg/ffprobe are marked `slow`; unit tests must stay fast and
 fixture-based.
+
+`tests/test_architecture.py` guards import direction, PySide6 confinement, and file-size budgets
+(static and fast); keep it green.

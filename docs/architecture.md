@@ -25,6 +25,34 @@ Rules:
   read-only: `probe` reports one clip's capture time, mode, bucket, and review reason; `scan`
   classifies a footage folder and writes only its dry-run report. `vc controller` (issue #7)
   serves the controller contract below; `worker` and `gui` remain stubs.
+- These rules are enforced statically by `tests/test_architecture.py`: cross-package import
+  direction (the table above), PySide6 only under `gui/`, and the file-size budgets with their
+  shrink-only allowlist.
+
+### Module map
+
+Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and the test fixtures):
+
+- `core`: `models` (dataclasses/enums), `probe`, `capture_time`, `fingerprint`, `scan`,
+  `manifest` (SQLite queue), `markers`, `ffmpeg` (two-pass x265 encode), `validate`, `replace`,
+  `recover`, `config` (per-user TOML).
+- `controller`: `server` (facade), `http` (HTTP plumbing), `registry`/`jobs`/`sweep` (mixins),
+  `store` (SQLite bookkeeping), `memory_manifest` (in-memory double/fallback), `protocol`
+  (payload rules), `constants`.
+- `worker` and `gui`: package stubs reserved for issues #6 and #8–#9.
+- `cli`: `app` (parser + command registry), one module per subcommand (`probe`, `scan`,
+  `worker`, `controller`, `gui`), `constants` (exit codes).
+
+### Test layout
+
+`tests/conftest.py` is a registrar only: fixture groups live in `tests/fixtures/<domain>.py` and
+are registered through `pytest_plugins`. Suites are the top-level `tests/test_*.py` files and
+`tests/cli/**`; `tests/worker/**` (issue #6) and `tests/gui/**` (issue #8) are reserved.
+`tests/test_imports.py` checks that every module imports without the `gui` extra;
+`tests/test_architecture.py` checks cross-package import direction and file-size budgets
+(`src/**` ≤ 400 lines, `tests/**` ≤ 450). The audited over-budget files may only shrink:
+`core/manifest.py` (561), `core/scan.py` (474), `core/replace.py` (471), `core/ffmpeg.py` (470)
+at #23; the recommended first seam for `manifest.py` is the DDL/schema plus row codec.
 
 ## Data flow
 
