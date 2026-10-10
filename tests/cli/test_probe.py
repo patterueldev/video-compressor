@@ -1,4 +1,4 @@
-"""CLI tests (issue #1: version and stubs; #2: vc probe; #3: vc scan; #7: vc controller)."""
+"""CLI probe tests (issue #2: vc probe)."""
 
 from __future__ import annotations
 
@@ -9,68 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from videocompressor import __version__
-from videocompressor.cli import EXIT_ERROR, EXIT_NOT_IMPLEMENTED, main
-from videocompressor.core.config import DEFAULT_TEMPLATE_NAME, AppConfig, load_config
+from videocompressor.cli import EXIT_ERROR, main
+from videocompressor.core.config import DEFAULT_TEMPLATE_NAME, AppConfig
 from videocompressor.core.models import CaptureIssue, CaptureTimeMode, TemplateSettings
 from videocompressor.core.probe import ProbeError
 
-FIXTURES = Path(__file__).parent / "fixtures" / "ffprobe"
+FIXTURES = Path(__file__).parent.parent / "fixtures" / "ffprobe"
 
 NORMAL_RAW = "2024-06-14T17:41:00.000000Z"
-
-
-def test_version_prints_and_exits_zero(capsys):
-    with pytest.raises(SystemExit) as excinfo:
-        main(["--version"])
-    assert excinfo.value.code == 0
-    assert capsys.readouterr().out.strip() == f"vc {__version__}"
-
-
-@pytest.mark.parametrize("command", ["worker", "gui"])
-def test_subcommand_stubs_exit_clearly(command, capsys):
-    assert main([command]) == EXIT_NOT_IMPLEMENTED
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert f"vc {command}: not implemented yet" in captured.err
-
-
-def test_scan_requires_root_and_folder(capsys):
-    with pytest.raises(SystemExit) as excinfo:
-        main(["scan"])
-    assert excinfo.value.code == 2
-    assert "usage" in capsys.readouterr().err.lower()
-
-
-def test_no_command_prints_usage(capsys):
-    assert main([]) == EXIT_NOT_IMPLEMENTED
-    assert "usage" in capsys.readouterr().err.lower()
-
-
-def test_controller_help_exits_zero(capsys):
-    with pytest.raises(SystemExit) as excinfo:
-        main(["controller", "--help"])
-    assert excinfo.value.code == 0
-    assert "--print-token" in capsys.readouterr().out
-
-
-def test_controller_print_token_generates_and_saves(tmp_path, capsys):
-    config_path = tmp_path / "config.toml"
-
-    assert main(["controller", "--config", str(config_path), "--print-token"]) == 0
-    token = capsys.readouterr().out.strip()
-    assert len(token) >= 32
-    assert load_config(config_path).controller.token == token
-
-    # a second call reprints the same stored token
-    assert main(["controller", "--config", str(config_path), "--print-token"]) == 0
-    assert capsys.readouterr().out.strip() == token
-
-
-def test_controller_rejects_invalid_port(tmp_path, capsys):
-    config_path = tmp_path / "config.toml"
-    assert main(["controller", "--config", str(config_path), "--port", "70000"]) == 2
-    assert "between 0 and 65535" in capsys.readouterr().err
 
 
 def test_probe_local_wall_clock_default_reports_evening(tmp_path, monkeypatch, capsys):
@@ -146,7 +92,7 @@ def test_probe_unsupported_file_reports_review(tmp_path, monkeypatch, capsys):
             f"{path}: Invalid data found when processing input", kind=CaptureIssue.UNSUPPORTED
         )
 
-    monkeypatch.setattr("videocompressor.cli.probe_media", fake_probe)
+    monkeypatch.setattr("videocompressor.cli.probe.probe_media", fake_probe)
 
     assert main(["probe", str(clip)]) == 0
 
@@ -202,13 +148,6 @@ def test_probe_writes_nothing(tmp_path, monkeypatch, capsys):
     assert snapshot(folder) == before
 
 
-def test_probe_requires_a_file_argument(capsys):
-    with pytest.raises(SystemExit) as excinfo:
-        main(["probe"])
-    assert excinfo.value.code == 2
-    assert "usage" in capsys.readouterr().err.lower()
-
-
 def expected_report(
     path: Path,
     *,
@@ -246,7 +185,7 @@ def use_default_config(
     config.capture_time.mode = mode
     if template is not None:
         config.templates[DEFAULT_TEMPLATE_NAME] = template
-    monkeypatch.setattr("videocompressor.cli.load_config", lambda: config)
+    monkeypatch.setattr("videocompressor.cli.probe.load_config", lambda: config)
 
 
 def use_ffprobe_fixture(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
