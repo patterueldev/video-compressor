@@ -11,6 +11,7 @@ import contextlib
 import hmac
 import json
 import logging
+import socket
 from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
@@ -43,6 +44,11 @@ _ROUTES: tuple[tuple[str, tuple[object, ...], str], ...] = (
 class _ControllerHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    # socketserver defaults the listen backlog to 5; a burst of reconnecting
+    # workers overflows that accept queue, and macOS resets the overflowing
+    # connection (ConnectionResetError in the client's connect(), issue #24).
+    # SOMAXCONN is the OS accept-queue limit.
+    request_queue_size = socket.SOMAXCONN
 
     def __init__(self, address: tuple[str, int], controller: ControllerServer) -> None:
         super().__init__(address, _RequestHandler)
