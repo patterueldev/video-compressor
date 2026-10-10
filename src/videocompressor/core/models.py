@@ -161,3 +161,15 @@ class ClipRecord:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     completed_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class RunEvent:
+    """One entry of the manifest run log (backing the controller events endpoint)."""
+
+    seq: int
+    at: datetime
+    level: str
+    message: str
+    root_id: str | None = None
+    relative_path: str | None = None
