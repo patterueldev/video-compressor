@@ -13,6 +13,8 @@ MODULES = [
     "videocompressor.core.manifest",
     "videocompressor.core.models",
     "videocompressor.core.probe",
+    "videocompressor.core.recover",
+    "videocompressor.core.replace",
     "videocompressor.controller",
     "videocompressor.worker",
     "videocompressor.gui",

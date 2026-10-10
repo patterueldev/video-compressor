@@ -49,7 +49,37 @@ archive through three primitive operations, implemented against the worker's res
 v1 implements these directly on the worker-local filesystem: the SMB mount on macOS, the local
 ext4 path on the Linux homeserver. A later access-transport decision (issue #13) can add SSH/rsync
 transports behind the same three primitives without touching scan, encode, or replacement logic.
-`replace` is implemented in issue #5; the pipeline wiring in issue #6.
+`replace` is implemented in `core/replace.py` (issue #5); the pipeline wiring in issue #6, with
+`core/recover.py` handling crash reconciliation.
+
+### Replacement artifacts and recovery
+
+Both the staged temp and the backup live in the source's directory, so every rename stays on one
+filesystem and is atomic. Names embed a per-attempt job id (`[A-Za-z0-9._-]{1,64}`) so concurrent
+jobs cannot collide:
+
+| Artifact | Name |
+| --- | --- |
+| Staged output | `<clip name>.vc-tmp.<job_id>` |
+| Source backup | `<clip name>.vc-backup.<job_id>` |
+
+No attempt (including a retry after lease recovery) may start while artifacts for the clip exist:
+`core/replace.py` refuses with `ArtifactsPresentError`, and `core/recover.reconcile_source` runs
+first. Recovery is idempotent and never leaves the source path without the original or a
+confirmed replacement:
+
+| On-disk state | Reconciliation |
+| --- | --- |
+| source + temp(s) | remove the temps; the original was untouched |
+| source missing + backup | rename the backup back to the source path |
+| source missing + backup + temp(s) | rename the backup back; remove the temps |
+| source + backup, replacement readable | delete the backup (replacement confirmed) |
+| source + backup, replacement unreadable | rename the backup back over the replacement |
+| source missing, no artifacts | report `source_missing` for review; nothing can be restored |
+| several backups | restore the newest if needed, park the rest as `.vc-review.*`, report review |
+
+The readability confirmation defaults to a minimal `ffprobe` check; issue #4's full validator can
+be passed instead through the same seam.
 
 ## Controller HTTP contract v1
 
