@@ -1,4 +1,4 @@
-"""CLI tests (issue #1: version and stubs; issue #2 acceptance: vc probe report)."""
+"""CLI tests (issue #1: version and stubs; #2: vc probe; #3: vc scan; #7: vc controller)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pytest
 
 from videocompressor import __version__
 from videocompressor.cli import EXIT_ERROR, EXIT_NOT_IMPLEMENTED, main
-from videocompressor.core.config import DEFAULT_TEMPLATE_NAME, AppConfig
+from videocompressor.core.config import DEFAULT_TEMPLATE_NAME, AppConfig, load_config
 from videocompressor.core.models import CaptureIssue, CaptureTimeMode, TemplateSettings
 from videocompressor.core.probe import ProbeError
 
@@ -27,7 +27,7 @@ def test_version_prints_and_exits_zero(capsys):
     assert capsys.readouterr().out.strip() == f"vc {__version__}"
 
 
-@pytest.mark.parametrize("command", ["worker", "controller", "gui"])
+@pytest.mark.parametrize("command", ["worker", "gui"])
 def test_subcommand_stubs_exit_clearly(command, capsys):
     assert main([command]) == EXIT_NOT_IMPLEMENTED
     captured = capsys.readouterr()
@@ -45,6 +45,32 @@ def test_scan_requires_root_and_folder(capsys):
 def test_no_command_prints_usage(capsys):
     assert main([]) == EXIT_NOT_IMPLEMENTED
     assert "usage" in capsys.readouterr().err.lower()
+
+
+def test_controller_help_exits_zero(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        main(["controller", "--help"])
+    assert excinfo.value.code == 0
+    assert "--print-token" in capsys.readouterr().out
+
+
+def test_controller_print_token_generates_and_saves(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+
+    assert main(["controller", "--config", str(config_path), "--print-token"]) == 0
+    token = capsys.readouterr().out.strip()
+    assert len(token) >= 32
+    assert load_config(config_path).controller.token == token
+
+    # a second call reprints the same stored token
+    assert main(["controller", "--config", str(config_path), "--print-token"]) == 0
+    assert capsys.readouterr().out.strip() == token
+
+
+def test_controller_rejects_invalid_port(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    assert main(["controller", "--config", str(config_path), "--port", "70000"]) == 2
+    assert "between 0 and 65535" in capsys.readouterr().err
 
 
 def test_probe_local_wall_clock_default_reports_evening(tmp_path, monkeypatch, capsys):

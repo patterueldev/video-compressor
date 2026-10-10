@@ -19,6 +19,10 @@ MODULES = [
     "videocompressor.core.replace",
     "videocompressor.core.scan",
     "videocompressor.controller",
+    "videocompressor.controller.constants",
+    "videocompressor.controller.memory_manifest",
+    "videocompressor.controller.server",
+    "videocompressor.controller.store",
     "videocompressor.worker",
     "videocompressor.gui",
 ]
