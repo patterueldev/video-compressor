@@ -191,6 +191,28 @@ def test_heartbeat_without_the_lease_raises(manifest: Manifest, clock: _Clock):
         manifest.heartbeat("archive", "unknown.MP4", "worker-a")
 
 
+@pytest.mark.parametrize("state", [JobState.COMPLETE, JobState.FAILED])
+def test_heartbeat_on_a_terminal_clip_raises(manifest: Manifest, state: JobState):
+    manifest.upsert_clip(_record("clip.MP4"))
+    manifest.claim_next("worker-a")
+    manifest.update_state("archive", "clip.MP4", state)
+
+    with pytest.raises(LeaseError):
+        manifest.heartbeat("archive", "clip.MP4", "worker-a")
+
+
+def test_heartbeat_after_review_reconciliation_raises(manifest: Manifest, clock: _Clock):
+    manifest.upsert_clip(_record("clip.MP4"))
+    manifest.claim_next("worker-a")
+    manifest.update_state("archive", "clip.MP4", JobState.REPLACING)
+
+    clock.advance(LEASE_TTL_SECONDS + 1)
+    assert [record.relative_path for record in manifest.reconcile()] == ["clip.MP4"]
+
+    with pytest.raises(LeaseError):
+        manifest.heartbeat("archive", "clip.MP4", "worker-a")
+
+
 @pytest.mark.parametrize(
     "state",
     [JobState.ENCODING, JobState.COPIED, JobState.CLAIMED],

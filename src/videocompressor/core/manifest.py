@@ -340,17 +340,26 @@ class Manifest:
         return self.get_clip(*claimed_key) if claimed_key is not None else None
 
     def heartbeat(self, root_id: str, relative_path: str, worker_id: str) -> None:
-        """Renew the lease on a claimed clip (90 s TTL, 15 s heartbeat; issue #7)."""
+        """Renew the lease on a claimed clip (90 s TTL, 15 s heartbeat; issue #7).
+
+        Only clips in a lease-holding state are renewable; terminal states keep
+        ``worker_id`` as history, so a late heartbeat after completion or after
+        a review-parking reconciliation must raise instead of re-arming a lease.
+        """
         now = _utcnow()
+        lease_states = sorted(str(state) for state in LEASE_STATES)
+        placeholders = ", ".join("?" for _ in lease_states)
         cursor = self._connection.execute(
             "UPDATE clips SET lease_expires_at = ?, updated_at = ? "
-            "WHERE root_id = ? AND relative_path = ? AND worker_id = ?",
+            "WHERE root_id = ? AND relative_path = ? AND worker_id = ? "
+            f"AND state IN ({placeholders})",
             (
                 _to_iso(now + timedelta(seconds=LEASE_TTL_SECONDS)),
                 _to_iso(now),
                 root_id,
                 relative_path,
                 worker_id,
+                *lease_states,
             ),
         )
         if cursor.rowcount != 1:
