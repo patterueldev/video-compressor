@@ -6,6 +6,7 @@ from datetime import time
 import pytest
 
 from videocompressor.core.models import (
+    Bucket,
     CaptureIssue,
     CaptureTimeMode,
     Classification,
@@ -55,6 +56,10 @@ def test_capture_issue_members():
         "unreadable",
         "unsupported",
     }
+
+
+def test_bucket_members():
+    assert {item.value for item in Bucket} == {"daytime", "evening"}
 
 
 def test_capture_time_mode_defaults_to_local_wall_clock():

@@ -54,6 +54,13 @@ class CaptureTimeMode(StrEnum):
     UTC = "utc"
 
 
+class Bucket(StrEnum):
+    """Day/evening bitrate bucket for one clip (issue #2)."""
+
+    DAYTIME = "daytime"
+    EVENING = "evening"
+
+
 class OriginalHandling(StrEnum):
     """What happens to the source file after a validated replacement."""
 
