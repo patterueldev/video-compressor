@@ -24,7 +24,8 @@ Rules:
   "not implemented" message. `vc probe` (issue #2) and `vc scan` (issue #3) are implemented and
   read-only: `probe` reports one clip's capture time, mode, bucket, and review reason; `scan`
   classifies a footage folder and writes only its dry-run report. `vc controller` (issue #7)
-  serves the controller contract below; `worker` and `gui` remain stubs.
+  serves the controller contract below; `vc gui` (issue #8) launches the GUI; `worker` stays a
+  stub until issue #6.
 - These rules are enforced statically by `tests/test_architecture.py`: cross-package import
   direction (the table above), PySide6 only under `gui/`, and the file-size budgets with their
   shrink-only allowlist.
@@ -39,7 +40,9 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
 - `controller`: `server` (facade), `http` (HTTP plumbing), `registry`/`jobs`/`sweep` (mixins),
   `store` (SQLite bookkeeping), `memory_manifest` (in-memory double/fallback), `protocol`
   (payload rules), `constants`.
-- `worker` and `gui`: package stubs reserved for issues #6 and #8–#9.
+- `gui`: `app`, `main_window`, `drop_zone`, `roots_panel`, `templates_panel`, `clip_tables`, and
+  `scan_runner` widgets plus the pure Python `state` and `scan_service` (issue #8; #9 adds the
+  monitor); `worker`: package stub reserved for issue #6.
 - `cli`: `app` (parser + command registry), one module per subcommand (`probe`, `scan`,
   `worker`, `controller`, `gui`), `constants` (exit codes).
 

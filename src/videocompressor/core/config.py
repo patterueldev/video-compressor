@@ -4,21 +4,34 @@ Path (macOS): ``~/Library/Application Support/Video Compressor/config.toml``.
 
 Reading uses the standard library (``tomllib``); writing uses ``tomli-w``. A missing
 file loads as defaults, so the app always has a usable motorcycle template.
+
+The GUI adds registered archive roots (issue #8) plus template create/duplicate/rename
+helpers; every helper validates its input before the caller writes the file.
 """
 
 from __future__ import annotations
 
+import re
 import tomllib
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import time
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import tomli_w
 
-from videocompressor.core.models import CaptureTimeMode, OriginalHandling, TemplateSettings
+from videocompressor.core.models import (
+    ArchiveRoot,
+    CaptureTimeMode,
+    OriginalHandling,
+    TemplateSettings,
+)
 
 DEFAULT_TEMPLATE_NAME = "motorcycle"
+
+#: Registered archive-root ids double as manifest keys and job payload ids.
+ROOT_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
 CONFIG_FILENAME = "config.toml"
 
@@ -62,6 +75,7 @@ class AppConfig:
     templates: dict[str, TemplateSettings] = field(
         default_factory=lambda: {DEFAULT_TEMPLATE_NAME: TemplateSettings()}
     )
+    roots: list[ArchiveRoot] = field(default_factory=list)
     controller: ControllerSettings = field(default_factory=ControllerSettings)
 
 
@@ -84,6 +98,107 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
     return config_path
 
 
+def validate_root_id(value: str) -> str:
+    """Return the cleaned root id, or raise ``ValueError`` when it is invalid."""
+    root_id = value.strip()
+    if not ROOT_ID_PATTERN.fullmatch(root_id):
+        raise ValueError("root id must be 1-64 letters, digits, dot, underscore or dash")
+    return root_id
+
+
+def validate_template_name(value: str) -> str:
+    """Return the template name, or raise ``ValueError`` when it is invalid."""
+    if not value or value != value.strip():
+        raise ValueError("template name must be non-empty without surrounding spaces")
+    return value
+
+
+def validate_template(settings: TemplateSettings) -> list[str]:
+    """Return human-readable problems with ``settings`` (empty when valid)."""
+    problems: list[str] = []
+    if settings.output_height < 2 or settings.output_height % 2:
+        problems.append("output height must be a positive even number")
+    if settings.daytime_video_bitrate_kbps <= 0:
+        problems.append("daytime video bitrate must be positive")
+    if settings.evening_video_bitrate_kbps <= 0:
+        problems.append("evening video bitrate must be positive")
+    if settings.audio_bitrate_kbps <= 0:
+        problems.append("audio bitrate must be positive")
+    if not settings.audio_codec.strip():
+        problems.append("audio codec must not be empty")
+    if not settings.ffmpeg_preset.strip():
+        problems.append("ffmpeg preset must not be empty")
+    try:
+        ZoneInfo(settings.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        problems.append(f"unknown timezone {settings.timezone!r}")
+    return problems
+
+
+def add_template(
+    config: AppConfig, name: str, settings: TemplateSettings | None = None
+) -> TemplateSettings:
+    """Add a named template (motorcycle defaults unless ``settings`` is given)."""
+    clean = validate_template_name(name)
+    if clean in config.templates:
+        raise ValueError(f"template {clean!r} already exists")
+    config.templates[clean] = settings if settings is not None else TemplateSettings()
+    return config.templates[clean]
+
+
+def duplicate_template(config: AppConfig, source_name: str, new_name: str) -> TemplateSettings:
+    """Copy an existing template under ``new_name``."""
+    source = config.templates.get(source_name)
+    if source is None:
+        raise ValueError(f"unknown template {source_name!r}")
+    return add_template(config, new_name, replace(source))
+
+
+def rename_template(config: AppConfig, old_name: str, new_name: str) -> TemplateSettings:
+    """Rename a template, preserving its settings and ordering."""
+    clean = validate_template_name(new_name)
+    if old_name not in config.templates:
+        raise ValueError(f"unknown template {old_name!r}")
+    if clean != old_name and clean in config.templates:
+        raise ValueError(f"template {clean!r} already exists")
+    config.templates = {
+        (clean if key == old_name else key): value
+        for key, value in config.templates.items()
+    }
+    return config.templates[clean]
+
+
+def register_root(config: AppConfig, *, root_id: str, name: str, path: Path) -> ArchiveRoot:
+    """Register an archive root, rejecting duplicate ids, paths, and non-directories."""
+    clean_id = validate_root_id(root_id)
+    if any(root.id == clean_id for root in config.roots):
+        raise ValueError(f"root id {clean_id!r} is already registered")
+    resolved = path.expanduser()
+    if not resolved.is_absolute():
+        raise ValueError("root path must be absolute")
+    if any(root.path == resolved for root in config.roots):
+        raise ValueError(f"root path {resolved} is already registered")
+    if not resolved.is_dir():
+        raise ValueError(f"root path {resolved} is not a directory")
+    root = ArchiveRoot(id=clean_id, name=name.strip() or clean_id, path=resolved)
+    config.roots.append(root)
+    return root
+
+
+def root_for_folder(roots: Sequence[ArchiveRoot], folder: Path) -> ArchiveRoot | None:
+    """Return the most specific registered root containing ``folder``."""
+    target = folder.expanduser().resolve()
+    best: ArchiveRoot | None = None
+    best_parts = -1
+    for root in roots:
+        root_path = root.path.expanduser().resolve()
+        if target != root_path and root_path not in target.parents:
+            continue
+        if len(root_path.parts) > best_parts:
+            best, best_parts = root, len(root_path.parts)
+    return best
+
+
 def _config_to_toml(config: AppConfig) -> dict[str, object]:
     controller: dict[str, object] = {
         "host": config.controller.host,
@@ -91,13 +206,18 @@ def _config_to_toml(config: AppConfig) -> dict[str, object]:
     }
     if config.controller.token is not None:
         controller["token"] = config.controller.token
-    return {
+    document: dict[str, object] = {
         "capture_time": {"mode": str(config.capture_time.mode)},
         "templates": {
             name: _template_to_toml(template) for name, template in config.templates.items()
         },
-        "controller": controller,
     }
+    if config.roots:
+        document["roots"] = [
+            {"id": root.id, "name": root.name, "path": str(root.path)} for root in config.roots
+        ]
+    document["controller"] = controller
+    return document
 
 
 def _template_to_toml(template: TemplateSettings) -> dict[str, object]:
@@ -131,6 +251,18 @@ def _config_from_toml(data: Mapping[str, object]) -> AppConfig:
         }
         if parsed:
             config.templates = parsed
+
+    roots = data.get("roots")
+    if isinstance(roots, list):
+        config.roots = [
+            ArchiveRoot(
+                id=str(entry["id"]),
+                name=str(entry["name"]),
+                path=Path(str(entry["path"])),
+            )
+            for entry in roots
+            if isinstance(entry, Mapping) and {"id", "name", "path"} <= set(entry)
+        ]
 
     controller = data.get("controller")
     if isinstance(controller, Mapping):

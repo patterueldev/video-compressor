@@ -15,7 +15,7 @@ def test_version_prints_and_exits_zero(capsys):
     assert capsys.readouterr().out.strip() == f"vc {__version__}"
 
 
-@pytest.mark.parametrize("command", ["worker", "gui"])
+@pytest.mark.parametrize("command", ["worker"])
 def test_subcommand_stubs_exit_clearly(command, capsys):
     assert main([command]) == EXIT_NOT_IMPLEMENTED
     captured = capsys.readouterr()
