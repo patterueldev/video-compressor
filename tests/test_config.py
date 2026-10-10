@@ -54,3 +54,34 @@ def test_partial_file_fills_defaults(tmp_path):
     config = load_config(path)
     assert config.capture_time.mode is CaptureTimeMode.UTC
     assert config.templates[DEFAULT_TEMPLATE_NAME] == TemplateSettings()
+
+
+def test_controller_defaults(tmp_path):
+    config = load_config(tmp_path / "missing.toml")
+    assert config.controller.host == "127.0.0.1"
+    assert config.controller.port == 8765
+    assert config.controller.token is None
+
+
+def test_controller_round_trip(tmp_path):
+    path = tmp_path / "config.toml"
+    config = AppConfig()
+    config.controller.host = "0.0.0.0"
+    config.controller.port = 9000
+    config.controller.token = "secret-token"
+    save_config(config, path)
+
+    text = path.read_text(encoding="utf-8")
+    assert "[controller]" in text
+    loaded = load_config(path)
+    assert loaded.controller == config.controller
+
+
+def test_controller_section_partial(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("[controller]\nport = 9100\n", encoding="utf-8")
+
+    config = load_config(path)
+    assert config.controller.port == 9100
+    assert config.controller.host == "127.0.0.1"
+    assert config.controller.token is None
