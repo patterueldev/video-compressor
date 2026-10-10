@@ -48,6 +48,7 @@ class MediaFacts:
     height: int | None
     has_audio: bool
     creation_time: str | None
+    stream_codec_tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,9 @@ def probe_media_facts(path: Path, *, ffprobe_bin: str = FFPROBE_BIN) -> MediaFac
         height=video.get("height"),
         has_audio=has_audio,
         creation_time=tags.get("creation_time"),
+        stream_codec_tags=tuple(
+            tag for stream in streams if (tag := stream.get("codec_tag_string"))
+        ),
     )
 
 

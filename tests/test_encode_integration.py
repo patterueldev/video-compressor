@@ -21,6 +21,7 @@ pytestmark = [
 ]
 
 CREATION_TIME = "2026-01-02T03:04:05Z"
+TIMECODE = "14:16:29:17"
 CLIP_SECONDS = 4
 
 
@@ -61,6 +62,8 @@ def synthetic_source(tmp_path_factory) -> Path:
             "aac",
             "-b:a",
             "128k",
+            "-metadata:s:v:0",
+            f"timecode={TIMECODE}",
             "-metadata",
             f"creation_time={CREATION_TIME}",
             str(path),
@@ -97,6 +100,9 @@ def test_two_pass_recipe_produces_a_valid_output(synthetic_source: Path, tmp_pat
     assert output_facts.height == 720
     assert output_facts.has_audio
     assert output_facts.creation_time == source_facts.creation_time == "2026-01-02T03:04:05.000000Z"
+    # The output keeps video + audio + the regenerated timecode track only;
+    # no other source data/telemetry streams are carried over.
+    assert set(output_facts.stream_codec_tags) == {"hvc1", "mp4a", "tmcd"}
 
     validation = validate_output(result.output_path, settings, source=source_facts)
     assert validation.ok, validation.failures
