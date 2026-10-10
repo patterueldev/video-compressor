@@ -1,9 +1,9 @@
 """Command-line entry points for Video Compressor.
 
-``vc scan`` runs a read-only dry run over a footage folder inside an archive
-root and writes only the report. The remaining subcommands belong to later
-issues; until those land, they exit with a clear "not implemented" message
-(exit code 2) instead of doing nothing.
+``vc probe`` (issue #2) and ``vc scan`` (issue #3) are implemented and
+read-only; they never write into the archive. The remaining subcommands belong
+to later issues; until those land, they exit with a clear "not implemented"
+message (exit code 2) instead of doing nothing.
 """
 
 from __future__ import annotations
@@ -15,12 +15,21 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from videocompressor import __version__
+from videocompressor.core.capture_time import bucket_for, resolve_capture_time
 from videocompressor.core.config import (
     DEFAULT_TEMPLATE_NAME,
     default_manifest_path,
     load_config,
 )
 from videocompressor.core.manifest import Manifest
+from videocompressor.core.models import (
+    Bucket,
+    CaptureIssue,
+    CaptureTime,
+    CaptureTimeMode,
+    TemplateSettings,
+)
+from videocompressor.core.probe import FFprobeUnavailableError, ProbeError, probe_media
 from videocompressor.core.scan import (
     DRY_RUN_REPORT_FILENAME,
     derive_root_id,
@@ -31,9 +40,9 @@ from videocompressor.core.scan import (
     write_report,
 )
 
+EXIT_ERROR = 1
 EXIT_NOT_IMPLEMENTED = 2
 EXIT_USAGE = 2
-EXIT_ERROR = 1
 
 #: Subcommands stubbed here; the owning issue implements each one.
 _SUBCOMMANDS = {
@@ -52,6 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+    probe_parser = subparsers.add_parser(
+        "probe", help="probe one clip and report capture time and bucket (issue #2)"
+    )
+    probe_parser.add_argument("file", type=Path, metavar="FILE", help="clip to probe")
     scan = subparsers.add_parser(
         "scan", help="scan a footage folder and report a dry run (issue #3)"
     )
@@ -119,6 +132,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "scan":
         return _run_scan(args)
 
+    if args.command == "probe":
+        return _run_probe(args.file)
+
     print(f"vc {args.command}: not implemented yet", file=sys.stderr)
     return EXIT_NOT_IMPLEMENTED
 
@@ -185,3 +201,76 @@ def _run_scan(args: argparse.Namespace) -> int:
         if manifest is not None:
             manifest.close()
     return 0
+
+
+def _run_probe(path: Path) -> int:
+    """Probe one clip and print its capture time, mode, bucket, and review reason.
+
+    Read-only: probing never writes to the archive. A review reason is data in the
+    report (exit code 0); only environment or configuration failures exit 1.
+    """
+    try:
+        config = load_config()
+    except (OSError, ValueError) as exc:
+        print(f"vc probe: cannot load config: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    mode = config.capture_time.mode
+    template = config.templates.get(DEFAULT_TEMPLATE_NAME, TemplateSettings())
+
+    try:
+        media = probe_media(path)
+    except FFprobeUnavailableError as exc:
+        print(f"vc probe: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except ProbeError as exc:
+        _print_probe_report(path, mode=mode, capture=None, bucket=None, review=exc.kind)
+        return 0
+
+    try:
+        capture = resolve_capture_time(media, mode=mode, timezone=template.timezone)
+        bucket = (
+            bucket_for(
+                capture.when,
+                evening_start=template.evening_start,
+                timezone=template.timezone,
+            )
+            if capture.when is not None
+            else None
+        )
+    except ValueError as exc:
+        print(f"vc probe: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    _print_probe_report(path, mode=mode, capture=capture, bucket=bucket, review=capture.issue)
+    return 0
+
+
+def _print_probe_report(
+    path: Path,
+    *,
+    mode: CaptureTimeMode,
+    capture: CaptureTime | None,
+    bucket: Bucket | None,
+    review: CaptureIssue | None,
+) -> None:
+    lines = [
+        f"file: {path}",
+        f"capture_time: {_when_text(capture)}",
+        f"raw: {capture.raw if capture and capture.raw else 'none'}",
+        f"source: {capture.source if capture and capture.source else 'none'}",
+        f"mode: {mode.value}",
+        f"bucket: {bucket.value if bucket else 'none'}",
+        f"review: {review.value if review else 'none'}",
+    ]
+    print("\n".join(lines))
+
+
+def _when_text(capture: CaptureTime | None) -> str:
+    if capture is None or capture.when is None:
+        return "none"
+    return capture.when.isoformat()
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
