@@ -1,0 +1,31 @@
+name: video-compressor-worker
+
+# Homeserver worker stack (issue #10). Run from this directory:
+#   cp .env.example .env && edit .env
+#   cp worker.example.toml worker.toml && edit the placeholders
+#   docker compose build && docker compose up -d
+services:
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/homeserver/Dockerfile
+    image: video-compressor-worker:latest
+    restart: unless-stopped
+    init: true
+    user: "${VC_UID:-1000}:${VC_GID:-1000}"
+    stop_grace_period: 30s
+    environment:
+      VC_WORKER_TOKEN: "${VC_WORKER_TOKEN:?set VC_WORKER_TOKEN in .env (see .env.example)}"
+    volumes:
+      # rw: the worker stages temp output and a recoverable backup beside the source.
+      - "${VC_ARCHIVE_ROOT:?set VC_ARCHIVE_ROOT in .env}:/srv/archive:rw"
+      # Scratch lives on the internal disk, never on the archive drives.
+      - "${VC_SCRATCH_ROOT:?set VC_SCRATCH_ROOT in .env}:/var/lib/videocompressor/scratch"
+      - ./worker.toml:/config/worker.toml:ro
+    cpus: 2.0
+    mem_limit: 2g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,17 @@
+# Build context for deploy/homeserver/Dockerfile (repo root).
+# Only pyproject.toml, README.md, and src/ are copied into the image.
+.git
+.github
+.venv
+venv
+.tmp
+**/__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.ruff_cache
+dist
+build
+tests
+docs
+scripts
