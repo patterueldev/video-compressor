@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "video-compressor"
+dynamic = ["version"]
+description = "GUI-driven, resumable GoPro video compressor with optional worker nodes"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "tomli-w>=1.0",
+]
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.7"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.9",
+]
+
+[project.scripts]
+vc = "videocompressor.cli:main"
+
+[tool.hatch.version]
+path = "src/videocompressor/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/videocompressor"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "slow: integration tests that need ffmpeg/ffprobe and real media files",
+]
