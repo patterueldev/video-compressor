@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import socket
+
 import pytest
 
+from videocompressor.controller.http import _ControllerHTTPServer
 from videocompressor.controller.server import ControllerError
 from videocompressor.core.models import Classification, Fingerprint, JobState
 
@@ -229,3 +232,9 @@ def test_run_events_are_tagged_and_lifecycle_guard(server, api):
         f"run {run['run_id']} started",
         f"run {run['run_id']} finished: 0 completed, 0 skipped, 0 failed, 0 review",
     ]
+
+
+def test_http_accept_backlog_absorbs_worker_reconnect_bursts():
+    # Regression for #24: socketserver's 5-connection default accept queue
+    # let a synchronized claim burst trigger a TCP reset on macOS.
+    assert _ControllerHTTPServer.request_queue_size >= socket.SOMAXCONN
