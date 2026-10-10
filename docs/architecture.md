@@ -41,8 +41,9 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   `store` (SQLite bookkeeping), `memory_manifest` (in-memory double/fallback), `protocol`
   (payload rules), `constants`.
 - `gui`: `app`, `main_window`, `drop_zone`, `roots_panel`, `templates_panel`, `clip_tables`, and
-  `scan_runner` widgets plus the pure Python `state` and `scan_service` (issue #8; #9 adds the
-  monitor).
+  `scan_runner` widgets plus the pure Python `state` and `scan_service` (issue #8) and the job
+  monitor (`monitor_app`, `monitor_window`, `monitor_panel`, `monitor_tables`, `monitor_runner`,
+  `monitor_service`, `monitor_client`, `controller_session`; issue #9).
 - `worker`: `agent` (register/heartbeat/claim loop and stop), `client` (controller HTTP v1),
   `pipeline` (per-job copy → encode → validate → replace), `transfer` (pilot delivery and
   replacement confirm), `config` (per-node TOML), `scratch` (local job dirs).
@@ -53,7 +54,7 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
 
 `tests/conftest.py` is a registrar only: fixture groups live in `tests/fixtures/<domain>.py` and
 are registered through `pytest_plugins`. Suites are the top-level `tests/test_*.py` files and
-`tests/cli/**`; `tests/worker/**` (issue #6) and `tests/gui/**` (issue #8) hold the per-area
+`tests/cli/**`; `tests/worker/**` (issue #6) and `tests/gui/**` (issues #8 and #9) hold the per-area
 suites.
 `tests/test_imports.py` checks that every module imports without the `gui` extra;
 `tests/test_architecture.py` checks cross-package import direction and file-size budgets

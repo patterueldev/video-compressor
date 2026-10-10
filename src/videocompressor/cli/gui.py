@@ -1,4 +1,8 @@
-"""``vc gui``: launch the PySide6 graphical interface (issue #8)."""
+"""``vc gui``: launch the PySide6 graphical interface (issues #8 and #9).
+
+The GUI hosts the controller in-process (or attaches to one already serving the
+configured address) and shows the library plus the job monitor.
+"""
 
 from __future__ import annotations
 
@@ -33,7 +37,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def _load_run_gui() -> Callable[..., int]:
     """Import the PySide6 app lazily so ``vc`` works without the gui extra."""
-    from videocompressor.gui.app import run as run_gui
+    from videocompressor.gui.monitor_app import run as run_gui
 
     return run_gui
 
