@@ -15,12 +15,13 @@ available as optional tooling (see "Optional scan and dry-run tooling").
 
 1. Start the app (`vc gui`). The GUI process hosts the controller and owns the durable queue, or
    attaches to a controller already serving the configured address.
-2. Select the videos: drag files and/or folders into the app, or use the open-files / open-folder
-   dialogs. A dropped folder recurses and picks up video files only. Selections append to a
-   pending list showing the clip count and total size.
+2. Select the videos in the Convert tab: drag files and/or folders into the app, or use the
+   open-files / open-folder dialogs. A dropped folder recurses and picks up video files
+   (`.mp4`/`.mov`) only. Selections append to a pending list showing the clip count and total
+   size.
 3. Choose the destination: a registered output root (optionally with a subfolder), a custom
-   folder, or "same folder as source" — the verified swap that replaces each source at its own
-   path and therefore consumes the original.
+   folder inside a registered root, or "same folder as source" — the verified swap that replaces
+   each source at its own path and therefore consumes the original.
 4. Decide whether originals are deleted after conversion. The default is to keep them; a source
    is deleted only after its output exists at the destination and passes validation.
 5. Choose the processing template; its settings (single video bitrate, output height, audio,

@@ -7,8 +7,8 @@ pull request until filed).
 
 | plan.md clause | Status | Evidence |
 | --- | --- | --- |
-| Select videos (drop or dialogs) and convert to a chosen destination | API and pipeline done; GUI pending #41 | Enqueue API and job model (#39: `POST /api/v1/jobs`, `controller/enqueue.py`), destination placement and optional verified delete (#40: `core/place.py`, `core/records.py`, `worker/destination.py`); tests `tests/test_controller_enqueue.py`, `tests/test_place.py`, `tests/worker/test_pipeline_destination*.py`. The GUI convert flow is issue #41. |
-| Start from the GUI and watch the run | monitor done; GUI start pending #41 | Job monitor, stop/resume, and run summary (issue #9); the GUI convert flow (#41) enqueues through the #39 API. The operator run is the #44 acceptance milestone below. |
+| Select videos (drop or dialogs) and convert to a chosen destination | done; operator evidence pending | Enqueue API and job model (#39: `POST /api/v1/jobs`, `controller/enqueue.py`), destination placement and optional verified delete (#40: `core/place.py`, `core/records.py`, `worker/destination.py`), and the GUI convert flow (#41, PR #49: `gui/convert_panel.py`, `convert_service.py`); tests `tests/test_controller_enqueue.py`, `tests/test_place.py`, `tests/worker/test_pipeline_destination*.py`, `tests/gui/test_convert_*.py`. The real run is the #44 acceptance milestone below. |
+| Start from the GUI and watch the run | done; operator evidence pending | The Convert tab enqueues through the #39 API and switches to the Monitor tab (#41); the job monitor (issue #9) shows progress, stop/resume, and the run summary. The operator run is the #44 acceptance milestone below. |
 | Use one or more workers safely | done, operator evidence pending | Worker agent (#6), controller leases and transactional claims (#7), container node (#10); `scripts/two_node_check.py`; the real homeserver two-node run is operator-gated ([deploy/homeserver/README.md](../deploy/homeserver/README.md)). |
 | Replace or delete validated sources only after a verified conversion | done, acceptance run operator-gated | Verified replacement protocol (#5), destination placement with delete-after-validation (#40), worker pipeline (#6), fault-injection matrix. The #12 pilot ceremony is superseded; the one remaining real-clip checkpoint is the #44 acceptance run (delete off, then delete on a copy). |
 | Re-run without redoing completed clips or losing a source | done for tests; real run operator-gated | `scripts/rerun_matrix.py` scenarios pass synthetically (`tests/test_rerun_matrix_slow.py`); the real-folder matrix run is the #13 operator checkpoint below. |
@@ -29,7 +29,7 @@ pull request until filed).
 ## Deferrals (proposed follow-ups; drafts in the #13 pull request)
 
 - **F1 — GUI queue-start slice**: resolved in code — the enqueue API (#39) and the GUI convert
-  flow (#41) start runs from the app; confirm it in the #44 acceptance run.
+  flow (#41, merged) start runs from the app; confirm it in the #44 acceptance run.
 - **F2 — Retry/requeue failed and review clips**: no operator retry path outside
   `scripts/pilot_run.py enqueue --requeue` (re-enqueue reports `previously_failed` for failed
   records), and `core/scan.py::_decide` keeps review records in review until the manifest is

@@ -38,14 +38,15 @@ The `vc` entry point lives in the venv: `.venv/bin/vc --help`.
    address is attached to instead. Register the source root (and any output root), and review the
    templates, in the Library tab.
 
-2. Select the videos: drop files and/or folders onto the drop area, or use the open-files /
-   open-folder dialogs. A dropped folder recurses and picks up video files only; the pending list
-   shows the clip count and total size.
+2. In the Convert tab, select the videos: drop files and/or folders onto the drop area, or use
+   the "Open files…" / "Open folder…" dialogs. A dropped folder recurses and picks up video
+   files only; the pending list shows the clip count and total size.
 
 3. Choose the destination — a registered output root (optionally with a subfolder), a custom
-   folder, or "same folder as source" (the verified swap, which consumes the source) — and
-   decide whether originals are deleted after conversion. The default keeps originals; a source
-   is deleted only after its output exists at the destination and validates.
+   folder inside a registered root, or "same folder as source" (the verified swap, which
+   consumes the source) — and decide whether originals are deleted after conversion. The default
+   keeps originals; a source is deleted only after its output exists at the destination and
+   validates.
 
 4. Press Start. The Monitor tab shows workers, per-node progress, ETA, and the run log; stopping
    is safe (the active clip is requeued and restarts later).

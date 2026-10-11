@@ -405,14 +405,15 @@ belong to the worker pipeline (#40).
 
 The worker also decodes a node-local `custom_folder` spec
 (`{"kind": "custom_folder", "path": "<absolute folder>"}`, issue #40); this endpoint does not
-produce it yet (candidate follow-up). The operator's "custom folder" choice (epic #38) can be
-expressed as an `output_root` destination: the caller resolves the picked folder through the
-registered roots (`core.config.root_for_folder`). `output_root` sources and destinations never
-carry host paths; every node resolves `root_id` + `relative_path` through its own worker
-`[roots]` mapping, so the Mac's mounted path and the homeserver's local path run the same job.
-`delete_original` records the operator's choice; the pipeline may delete a source only after its
-output exists at the destination and validates (#40), and a `same_folder` job always consumes
-the source through the verified swap.
+produce it (candidate follow-up). The operator's "custom folder" choice (epic #38) is expressed
+as an `output_root` destination: the GUI convert flow (issue #41,
+`gui/convert_service.py`) resolves the picked folder through the registered roots
+(`core.config.root_for_folder`) and sends `root_id` + relative path. `output_root` sources and
+destinations never carry host paths; every node resolves `root_id` + `relative_path` through its
+own worker `[roots]` mapping, so the Mac's mounted path and the homeserver's local path run the
+same job. `delete_original` records the operator's choice; the pipeline may delete a source only
+after its output exists at the destination and validates (#40), and a `same_folder` job always
+consumes the source through the verified swap.
 
 #### `POST /api/v1/workers/{worker_id}/stop`
 
