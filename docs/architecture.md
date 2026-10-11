@@ -36,7 +36,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
 
 - `core`: `models` (dataclasses/enums), `probe`, `capture_time`, `fingerprint`, `scan`,
   `manifest` (SQLite queue), `markers`, `ffmpeg` (two-pass x265 encode), `validate`, `replace`,
-  `recover`, `config` (per-user TOML).
+  `place` (destination placement), `records` (destination completion records), `recover`,
+  `config` (per-user TOML).
 - `controller`: `server` (facade), `http` (HTTP plumbing), `registry`/`jobs`/`sweep` (mixins),
   `store` (SQLite bookkeeping), `memory_manifest` (in-memory double/fallback), `protocol`
   (payload rules), `constants`.
@@ -45,7 +46,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   monitor (`monitor_app`, `monitor_window`, `monitor_panel`, `monitor_tables`, `monitor_runner`,
   `monitor_service`, `monitor_client`, `controller_session`; issue #9).
 - `worker`: `agent` (register/heartbeat/claim loop and stop), `client` (controller HTTP v1),
-  `pipeline` (per-job copy → encode → validate → replace), `transfer` (pilot delivery and
+  `outcome` (per-job result type), `pipeline` (per-job copy → encode → validate → replace),
+  `destination` (destination decode/resolve/place/delete), `transfer` (pilot delivery and
   replacement confirm), `config` (per-node TOML), `scratch` (local job dirs).
 - `cli`: `app` (parser + command registry), one module per subcommand (`probe`, `scan`,
   `worker`, `controller`, `gui`), `constants` (exit codes).
@@ -67,6 +69,10 @@ at #23; the recommended first seam for `manifest.py` is the DDL/schema plus row 
 dropped folder → scan + classify (#2, #3) → queue (manifest) → worker claims a job (#7) → copy to
 local scratch → two-pass x265 encode (#4) → validate (#4) → transfer back + replace (#5) → mark
 complete in the manifest (#3) → run summary (#9)
+
+Convert jobs (#40) may instead carry a destination — a registered output root, a custom folder,
+or the source's own folder — and delete the original only after the destination file exists and
+validates (see "Destination placement, skip, and verified delete").
 
 The GUI process is the controller and owns the durable queue and manifest while a run is active.
 Workers pull jobs and resolve each job's archive-relative path through their own configured
@@ -142,6 +148,39 @@ confirmed replacement:
 
 The readability confirmation defaults to a minimal `ffprobe` check; issue #4's full validator can
 be passed instead through the same seam.
+
+### Destination placement, skip, and verified delete (issue #40)
+
+Convert jobs may carry a destination — a registered output root plus relative path, a custom
+folder on the node, or the source's own folder (which is the verified swap above) — and a
+`delete_original` flag. The worker decodes and resolves the claim spec per node
+(`worker/destination.py`); a custom destination is placed by `core/place.py`:
+
+1. stage `<clip name>.vc-tmp.<job_id>` beside the destination file, verify it by full read-back
+   SHA-256, and validate it at the destination with the full validator;
+2. write `<clip name>.vc-meta.json` (`core/records.py`) atomically *before* the rename, so a
+   crash can never leave a final output without its record;
+3. rename the temp into place and confirm the placed file by size + sampled digest;
+4. delete the source only when the job asked for it: one atomic unlink, only after the placed
+   output validated and was recorded, and only while the source still matches the fingerprint
+   captured at claim (`delete_source_verified`).
+
+The record ties the output to the clip identity (`root_id` + archive-relative path + file name)
+and to the source fingerprint captured at claim. An existing destination file is **skipped**
+only when its record names the clip, the source fingerprint still confirms the claim, the file
+still matches the recorded output fingerprint, and the full validation passes; anything else
+that occupies the destination path is a **collision** (review, never overwritten). Same-folder
+jobs keep the `manifest.json` marker above; destination placements record a sidecar instead,
+because the marker's fingerprint is compared against the file at the clip's own path (see
+"Archive scan artifacts"). A custom folder must already exist on the node; registered output
+roots resolve through the node's `[roots]` mapping and may create the relative sub-path.
+
+Invariant: if a source file is absent, a recorded, validated destination output for that clip
+exists. Crash points — kill during the scratch copy/encode, destination staging/validation, the
+record write, the rename, or the delete — leave either (source present, no final output or an
+output to re-classify) or (source absent, recorded validated output). A resume reaps temps and
+stale records idempotently (`cleanup_destination`) and never adopts a leftover temp; a missing
+source with a matching record settles the job as skipped instead of review.
 
 ## Controller HTTP contract v1
 
