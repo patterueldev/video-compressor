@@ -133,6 +133,9 @@ def test_claim_heartbeat_complete_flow(api, seed_clip, manifest):
     }
     assert len(job["settings_hash"]) == 64
     assert job["capture_time"] is None
+    # legacy script-seeded clips keep the replace-at-source flow
+    assert "destination" not in job
+    assert "delete_original" not in job
 
     status, heartbeat = api.post(
         "/workers/a/heartbeat",

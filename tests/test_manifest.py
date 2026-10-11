@@ -20,6 +20,8 @@ from videocompressor.core.models import (
     CaptureTimeMode,
     Classification,
     ClipRecord,
+    Destination,
+    DestinationKind,
     Fingerprint,
     JobState,
 )
@@ -323,3 +325,108 @@ def test_read_only_open_never_writes(tmp_path: Path):
 def test_lease_constants_match_the_architecture_contract():
     assert LEASE_TTL_SECONDS == 90
     assert HEARTBEAT_INTERVAL_SECONDS == 15
+
+
+_LEGACY_CLIPS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS clips (
+    root_id           TEXT NOT NULL,
+    relative_path     TEXT NOT NULL,
+    state             TEXT NOT NULL,
+    classification    TEXT NOT NULL,
+    source_size_bytes INTEGER NOT NULL,
+    source_mtime_ns   INTEGER NOT NULL,
+    source_digest     TEXT NOT NULL,
+    output_size_bytes INTEGER,
+    output_mtime_ns   INTEGER,
+    output_digest     TEXT,
+    capture_time_json TEXT,
+    template_id       TEXT,
+    settings_hash     TEXT,
+    worker_id         TEXT,
+    lease_expires_at  TEXT,
+    error             TEXT,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    completed_at      TEXT,
+    PRIMARY KEY (root_id, relative_path)
+);
+CREATE TABLE IF NOT EXISTS events (
+    seq           INTEGER PRIMARY KEY AUTOINCREMENT,
+    at            TEXT NOT NULL,
+    level         TEXT NOT NULL,
+    message       TEXT NOT NULL,
+    root_id       TEXT,
+    relative_path TEXT
+);
+"""
+
+
+def test_destination_and_delete_original_round_trip(manifest: Manifest, clock: _Clock):
+    destination = Destination(
+        DestinationKind.OUTPUT_ROOT, root_id="compressed", relative_path="2026-10"
+    )
+    manifest.upsert_clip(_record("clip.MP4", destination=destination, delete_original=True))
+    stored = manifest.get_clip("archive", "clip.MP4")
+    assert stored is not None and stored.destination == destination
+    assert stored.delete_original is True
+
+    manifest.update_state("archive", "clip.MP4", JobState.QUEUED)
+
+    stored = manifest.get_clip("archive", "clip.MP4")
+    assert stored is not None
+    assert stored.destination == destination and stored.delete_original is True
+
+
+def test_update_state_rejects_invalid_conversion_fields(manifest: Manifest):
+    manifest.upsert_clip(_record("clip.MP4"))
+    with pytest.raises(ValueError, match="destination"):
+        manifest.update_state("archive", "clip.MP4", JobState.QUEUED, destination="oops")
+    with pytest.raises(ValueError, match="delete_original"):
+        manifest.update_state("archive", "clip.MP4", JobState.QUEUED, delete_original="yes")
+
+
+def test_legacy_database_migrates_on_writable_open(tmp_path: Path):
+    db_path = tmp_path / "legacy.sqlite"
+    connection = sqlite3.connect(db_path)
+    connection.executescript(_LEGACY_CLIPS_SCHEMA)
+    connection.execute(
+        "INSERT INTO clips (root_id, relative_path, state, classification,"
+        " source_size_bytes, source_mtime_ns, source_digest, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "archive",
+            "clip.MP4",
+            "queued",
+            "new",
+            10,
+            20,
+            "digest",
+            "2026-10-01T12:00:00+00:00",
+            "2026-10-01T12:00:00+00:00",
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    # A read-only open never migrates but still reads the legacy row.
+    with Manifest.open(db_path, create=False) as readonly:
+        legacy = readonly.get_clip("archive", "clip.MP4")
+        assert legacy is not None
+        assert legacy.destination is None and legacy.delete_original is False
+
+    with Manifest.open(db_path) as migrated:
+        record = migrated.get_clip("archive", "clip.MP4")
+        assert record is not None
+        assert record.destination is None and record.delete_original is False
+
+        migrated.upsert_clip(
+            _record(
+                "clip.MP4",
+                destination=Destination(DestinationKind.OUTPUT_ROOT, "compressed", "2026-10"),
+                delete_original=True,
+            )
+        )
+        stored = migrated.get_clip("archive", "clip.MP4")
+        assert stored is not None and stored.destination is not None
+        assert stored.destination.root_id == "compressed"
+        assert stored.delete_original is True
