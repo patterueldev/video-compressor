@@ -3,6 +3,11 @@
 Status: **CP-1 decided by the operator** — one bitrate for all buckets; the candidate-bitrate
 sweep is not required.
 
+> **Superseded ceremony:** the epic #38 convert flow replaced the rest of the #12 pilot ceremony
+> (pilot encodes and the watched first replacement). The decision below remains the live setting;
+> the one remaining real-clip checkpoint is the #44 acceptance run (delete off, then delete on a
+> copy).
+
 ## Decision (operator)
 
 | Setting | Value | Notes |

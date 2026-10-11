@@ -1,6 +1,7 @@
 # Pilot dry run — real folders, classification, and capture-time interpretation
 
-**Issue:** [#11](https://github.com/patterueldev/video-compressor/issues/11) (plan.md pilot steps 1–2)
+**Issue:** [#11](https://github.com/patterueldev/video-compressor/issues/11) (optional dry-run
+tooling; plan.md "Optional scan and dry-run tooling")
 · **Date:** 2026-10-10 · **Operator:** Pat
 **Tool:** `vc` 0.1.0 at commit `e4fe843`; venv (Python 3.14.8), ffprobe/ffmpeg 8.1.1 (Homebrew).
 
@@ -12,7 +13,8 @@ was modified.
 - Archive root: `/Volumes/IronWolfHDD8TB/CAMERA` (SMB share `//pat@saturday.local/IronWolfHDD8TB`),
   pinned `--root-id camera`.
 - No per-user config or manifest existed, so the scans used the shipped defaults: `Asia/Manila`,
-  evening from 17:30, 800 kbps day and evening, AAC 96 kbps, preset `medium`, 720p,
+  evening from 17:30, one 800 kbps video bitrate for all clips (the legacy day/evening pair,
+  collapsed by #43), AAC 96 kbps, preset `medium`, 720p,
   replace-after-validated-transfer, and `local_wall_clock` capture-time mode (the default under
   review). Settings hash `d7a81a5338b6f6a6`.
 - Folders dry-run (operator choice):
@@ -140,8 +142,8 @@ rate; SMB transfer/replace fails repeatedly; or scan cost grows with the archive
 
 ## Rerun matrix and V1 readiness (issue #13)
 
-`scripts/rerun_matrix.py` automates plan.md pilot step 7 and checks, end to end against a real
-controller and worker subprocesses: completed clips skip after a template change; a changed
+`scripts/rerun_matrix.py` automates the plan.md rerun expectations and checks, end to end against
+a real controller and worker subprocesses: completed clips skip after a template change; a changed
 source is flagged and never silently replaced; a SIGKILLed worker's clip is requeued by the
 expired lease and completed by the next run; an injected pass-2 encode failure leaves the source
 byte-identical and a retry completes the clip. The synthetic variant (`--synthetic`) runs
@@ -176,8 +178,10 @@ the deferrals.
       an issue when DJI footage joins a processing run.
 - [ ] (optional, data-only) Repair or accept the +8 h MOTORCYCLE filename prefixes outside this
       pilot.
-- [ ] (proposed in the #13 pull request) GUI queue-start slice; retry/requeue for failed and
-      review clips; camera-clock-reset detection — drafts recorded there until filed.
+- [x] GUI queue-start slice — delivered by the epic #38 convert flow (enqueue API #39, GUI #41);
+      the #44 acceptance run is the remaining checkpoint.
+- [ ] (proposed in the #13 pull request) Retry/requeue for failed and review clips;
+      camera-clock-reset detection — drafts recorded there until filed.
 - `local_wall_clock` default: **confirmed unchanged** (this pilot's timezone decision).
 
 ## Reproduction

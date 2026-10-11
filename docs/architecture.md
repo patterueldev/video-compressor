@@ -69,23 +69,30 @@ extracted into `core/manifest_schema.py`.
 
 ## Data flow
 
-dropped folder → scan + classify (#2, #3) → queue (manifest) → worker claims a job (#7) → copy to
-local scratch → two-pass x265 encode (#4) → validate (#4) → transfer back + replace (#5) → mark
-complete in the manifest (#3) → run summary (#9)
+The convert flow is the product's primary flow (epic #38): selected videos (drag & drop or open
+dialogs) → explicit files → `POST /api/v1/jobs` (issue #39) → queue (manifest) → worker claims a
+job (#7) → copy to local scratch → two-pass x265 encode (#4) → validate (#4) → destination
+placement (#40) or the same-folder verified swap (#5) → optional verified source delete (#40) →
+complete/skip in the manifest → run summary and monitor (#9).
 
-Direct conversions take a shorter path: explicit files → `POST /api/v1/jobs` (issue #39) →
-queue (manifest) → the same worker claim/pipeline below.
+Convert jobs (#40) carry a destination — a registered output root, a custom folder, or the
+source's own folder — and delete the original only after the destination file exists and
+validates (see "Destination placement, skip, and verified delete"). A job's identity stays the
+`root_id` + `relative_path` pair; enqueue is idempotent, so re-selecting a clip never rewrites an
+existing record.
 
-Convert jobs (#40) may instead carry a destination — a registered output root, a custom folder,
-or the source's own folder — and delete the original only after the destination file exists and
-validates (see "Destination placement, skip, and verified delete").
+Optional tooling, no longer the main path: a dropped folder → scan + classify (#2, #3) → dry-run
+report. Legacy or script-seeded clips without a destination keep the replace-at-source flow.
 
 The GUI process is the controller and owns the durable queue and manifest while a run is active.
 Workers pull jobs and resolve each job's archive-relative path through their own configured
 archive-root mapping, so the same relative path works on the Mac, another computer, or the Linux
 homeserver.
 
-## Archive scan artifacts (issue #3)
+## Archive scan artifacts (issue #3, optional tooling)
+
+Scanning is no longer the product's primary flow (see "Data flow"); this section documents the
+optional dry-run and reporting tooling.
 
 - The manifest is keyed by `root_id` + archive-root-relative POSIX path. Until roots are
   registered (issue #8), the CLI derives a stable `root_id` from the resolved root path and can
@@ -400,14 +407,15 @@ belong to the worker pipeline (#40).
 
 The worker also decodes a node-local `custom_folder` spec
 (`{"kind": "custom_folder", "path": "<absolute folder>"}`, issue #40); this endpoint does not
-produce it yet (candidate follow-up). The operator's "custom folder" choice (epic #38) can be
-expressed as an `output_root` destination: the caller resolves the picked folder through the
-registered roots (`core.config.root_for_folder`). `output_root` sources and destinations never
-carry host paths; every node resolves `root_id` + `relative_path` through its own worker
-`[roots]` mapping, so the Mac's mounted path and the homeserver's local path run the same job.
-`delete_original` records the operator's choice; the pipeline may delete a source only after its
-output exists at the destination and validates (#40), and a `same_folder` job always consumes
-the source through the verified swap.
+produce it (candidate follow-up). The operator's "custom folder" choice (epic #38) is expressed
+as an `output_root` destination: the GUI convert flow (issue #41,
+`gui/convert_service.py`) resolves the picked folder through the registered roots
+(`core.config.root_for_folder`) and sends `root_id` + relative path. `output_root` sources and
+destinations never carry host paths; every node resolves `root_id` + `relative_path` through its
+own worker `[roots]` mapping, so the Mac's mounted path and the homeserver's local path run the
+same job. `delete_original` records the operator's choice; the pipeline may delete a source only
+after its output exists at the destination and validates (#40), and a `same_folder` job always
+consumes the source through the verified swap.
 
 #### `POST /api/v1/workers/{worker_id}/stop`
 
