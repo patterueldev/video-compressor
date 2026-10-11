@@ -1,7 +1,6 @@
 """Frozen-model tests (issue #1 acceptance: template defaults, shared states)."""
 
 from dataclasses import FrozenInstanceError
-from datetime import time
 
 import pytest
 
@@ -20,9 +19,7 @@ from videocompressor.core.models import (
 def test_motorcycle_template_defaults_match_plan_md():
     settings = TemplateSettings()
     assert settings.output_height == 720
-    assert settings.daytime_video_bitrate_kbps == 800
-    assert settings.evening_video_bitrate_kbps == 800
-    assert settings.evening_start == time(17, 30)
+    assert settings.video_bitrate_kbps == 800
     assert settings.timezone == "Asia/Manila"
     assert settings.audio_codec == "aac"
     assert settings.audio_bitrate_kbps == 96

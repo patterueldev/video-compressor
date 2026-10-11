@@ -193,7 +193,7 @@ def test_template_change_marks_the_displayed_scan_stale(window):
     assert win.clip_tables.stale_notice() == ""
 
     win.config.templates["motorcycle"] = replace(
-        TemplateSettings(), evening_video_bitrate_kbps=1500
+        TemplateSettings(), video_bitrate_kbps=1500
     )
     win.templates_panel.template_selected.emit("motorcycle")
 

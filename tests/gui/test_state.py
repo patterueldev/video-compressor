@@ -61,7 +61,7 @@ def test_bitrate_override_recomputes_estimate():
 
 
 def test_template_settings_drive_effective_bitrate():
-    settings = replace(TemplateSettings(), evening_video_bitrate_kbps=1500)
+    settings = replace(TemplateSettings(), video_bitrate_kbps=1500)
     state = _state([make_scan_row()], settings)
     assert state.rows()[0].video_bitrate_kbps == 1500
 
@@ -89,17 +89,17 @@ def test_manual_capture_time_on_review_row_sets_bucket_and_bitrate():
     assert not state.rows()[0].capture_manual
 
 
-def test_manual_capture_time_uses_template_bucket_bitrates():
-    settings = replace(
-        TemplateSettings(), daytime_video_bitrate_kbps=1000, evening_video_bitrate_kbps=1500
-    )
+def test_manual_capture_time_uses_the_template_bitrate():
+    settings = replace(TemplateSettings(), video_bitrate_kbps=1500)
     state = _state([make_review_row()], settings)
     path = "2026-06-Ride/GX010002.MP4"
 
     state.set_capture_time(path, datetime(2026, 6, 14, 9, 5))
-    assert state.rows()[0].video_bitrate_kbps == 1000
+    assert state.rows()[0].bucket is Bucket.DAYTIME
+    assert state.rows()[0].video_bitrate_kbps == 1500
     state.set_capture_time(path, datetime(2026, 6, 14, 17, 30))
-    assert state.rows()[0].video_bitrate_kbps == 1500  # exactly 17:30 is evening
+    assert state.rows()[0].bucket is Bucket.EVENING  # exactly 17:30 is evening
+    assert state.rows()[0].video_bitrate_kbps == 1500  # one bitrate for both buckets
 
 
 def test_bitrate_override_after_manual_capture_time():
@@ -142,7 +142,7 @@ def test_settings_changed_flag():
     state = _state([make_scan_row()])
     assert not state.settings_changed
 
-    state.set_settings(replace(TemplateSettings(), evening_video_bitrate_kbps=1500))
+    state.set_settings(replace(TemplateSettings(), video_bitrate_kbps=1500))
     assert state.settings_changed
     assert state.rows()[0].video_bitrate_kbps == 1500
 

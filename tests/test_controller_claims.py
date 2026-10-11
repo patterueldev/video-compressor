@@ -99,14 +99,8 @@ def test_many_workers_race_many_clips_exactly_once_each(server, api, seed_clip):
     assert len(collected) == len(set(collected)) == len(expected)
 
 
-def test_claim_resolves_day_and_evening_bitrates(tmp_path, clock, make_api):
-    templates = {
-        "motorcycle": replace(
-            TemplateSettings(),
-            daytime_video_bitrate_kbps=700,
-            evening_video_bitrate_kbps=1500,
-        )
-    }
+def test_claim_carries_the_template_video_bitrate(tmp_path, clock, make_api):
+    templates = {"motorcycle": replace(TemplateSettings(), video_bitrate_kbps=700)}
     manifest = MemoryManifest(clock=clock)
     store = ControllerStore.open(tmp_path / "controller.sqlite", clock=clock)
     source = Fingerprint(size_bytes=4096, mtime_ns=1, digest="source-digest")
@@ -140,14 +134,14 @@ def test_claim_resolves_day_and_evening_bitrates(tmp_path, clock, make_api):
 
         status, evening = client.post("/jobs/claim", {"worker_id": "w"})
         assert status == 200
-        assert evening["job"]["settings"]["video_bitrate_kbps"] == 1500
+        assert evening["job"]["settings"]["video_bitrate_kbps"] == 700
         assert evening["job"]["capture_time"] == "2024-06-14T17:41:00+08:00"
 
         status, day = client.post("/jobs/claim", {"worker_id": "w"})
         assert status == 200
         assert day["job"]["settings"]["video_bitrate_kbps"] == 700
 
-        # a timestamp without an offset is local wall-clock time
+        # a timestamp without an offset is local wall-clock time; the bitrate is not per clip
         status, naive = client.post("/jobs/claim", {"worker_id": "w"})
         assert status == 200
-        assert naive["job"]["settings"]["video_bitrate_kbps"] == 1500
+        assert naive["job"]["settings"]["video_bitrate_kbps"] == 700

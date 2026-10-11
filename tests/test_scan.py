@@ -330,7 +330,7 @@ def test_a_template_change_does_not_invalidate_completed_clips(tmp_path: Path):
     root = tmp_path / "archive"
     folder = root / "ride"
     clip = _write_file(folder / "GS010001.MP4")
-    changed_settings = TemplateSettings(daytime_video_bitrate_kbps=1200)
+    changed_settings = TemplateSettings(video_bitrate_kbps=1200)
     assert settings_hash(changed_settings) != "old-settings-hash"
     write_marker(
         folder,
@@ -433,7 +433,7 @@ def test_estimate_output_bytes_from_duration_and_bitrates():
 def test_settings_hash_is_stable_and_sensitive():
     assert settings_hash(TemplateSettings()) == settings_hash(TemplateSettings())
     assert settings_hash(TemplateSettings()) != settings_hash(
-        TemplateSettings(daytime_video_bitrate_kbps=999)
+        TemplateSettings(video_bitrate_kbps=999)
     )
 
 

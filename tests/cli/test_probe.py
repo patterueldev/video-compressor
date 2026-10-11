@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import subprocess
-from datetime import time
 from pathlib import Path
 
 import pytest
@@ -115,10 +114,10 @@ def test_probe_without_ffprobe_is_an_environment_error(tmp_path, monkeypatch, ca
     assert "ffprobe not found" in captured.err
 
 
-def test_probe_uses_template_timezone_and_evening_start(tmp_path, monkeypatch, capsys):
+def test_probe_uses_template_timezone_and_fixed_boundary(tmp_path, monkeypatch, capsys):
     clip = make_clip(tmp_path)
     use_ffprobe_fixture(monkeypatch, "normal_ztagged.json")
-    template = dataclasses.replace(TemplateSettings(), timezone="UTC", evening_start=time(18, 0))
+    template = dataclasses.replace(TemplateSettings(), timezone="UTC")
     use_default_config(monkeypatch, template=template)
 
     assert main(["probe", str(clip)]) == 0
@@ -128,7 +127,7 @@ def test_probe_uses_template_timezone_and_evening_start(tmp_path, monkeypatch, c
         capture_time="2024-06-14T17:41:00+00:00",
         raw=NORMAL_RAW,
         source="format",
-        bucket="daytime",
+        bucket="evening",
     )
 
 
