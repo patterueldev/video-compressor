@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import time
 from pathlib import Path
 
-from PySide6.QtCore import QTime, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -15,7 +14,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QSpinBox,
-    QTimeEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -69,14 +67,9 @@ class TemplatesPanel(QWidget):
         self._height.setRange(2, 4320)
         self._height.setSingleStep(2)
         self._height.setSuffix(" px")
-        self._day = QSpinBox()
-        self._day.setRange(1, 100_000)
-        self._day.setSuffix(" kbps")
-        self._evening = QSpinBox()
-        self._evening.setRange(1, 100_000)
-        self._evening.setSuffix(" kbps")
-        self._evening_start = QTimeEdit()
-        self._evening_start.setDisplayFormat("HH:mm")
+        self._bitrate = QSpinBox()
+        self._bitrate.setRange(1, 100_000)
+        self._bitrate.setSuffix(" kbps")
         self._timezone = QLineEdit()
         self._audio_codec = QLineEdit()
         self._audio_bitrate = QSpinBox()
@@ -91,9 +84,7 @@ class TemplatesPanel(QWidget):
 
         form = QFormLayout()
         form.addRow("Output height", self._height)
-        form.addRow("Daytime bitrate", self._day)
-        form.addRow("Evening/night bitrate", self._evening)
-        form.addRow("Evening starts", self._evening_start)
+        form.addRow("Video bitrate", self._bitrate)
         form.addRow("Timezone", self._timezone)
         form.addRow("Audio", self._audio_codec)
         form.addRow("Audio bitrate", self._audio_bitrate)
@@ -159,10 +150,7 @@ class TemplatesPanel(QWidget):
     def load_editor(self, settings: TemplateSettings) -> None:
         """Show ``settings`` in the editor fields."""
         self._height.setValue(settings.output_height)
-        self._day.setValue(settings.daytime_video_bitrate_kbps)
-        self._evening.setValue(settings.evening_video_bitrate_kbps)
-        start = settings.evening_start
-        self._evening_start.setTime(QTime(start.hour, start.minute))
+        self._bitrate.setValue(settings.video_bitrate_kbps)
         self._timezone.setText(settings.timezone)
         self._audio_codec.setText(settings.audio_codec)
         self._audio_bitrate.setValue(settings.audio_bitrate_kbps)
@@ -213,12 +201,9 @@ class TemplatesPanel(QWidget):
         return self._finish_change(new_name)
 
     def _settings_from_editor(self) -> TemplateSettings:
-        start = self._evening_start.time()
         return TemplateSettings(
             output_height=self._height.value(),
-            daytime_video_bitrate_kbps=self._day.value(),
-            evening_video_bitrate_kbps=self._evening.value(),
-            evening_start=time(start.hour(), start.minute()),
+            video_bitrate_kbps=self._bitrate.value(),
             timezone=self._timezone.text().strip(),
             audio_codec=self._audio_codec.text().strip(),
             audio_bitrate_kbps=self._audio_bitrate.value(),

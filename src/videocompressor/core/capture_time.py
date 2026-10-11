@@ -7,7 +7,7 @@ Implements plan.md "Capture time and classification" (issue #2):
 - format-level tags win over stream-level tags, and candidates that resolve to
   different instants are a review outcome;
 - timestamps are interpreted in the configured timezone and classified as
-  daytime or evening for bitrate selection.
+  daytime or evening for the dry-run report.
 """
 
 from __future__ import annotations
@@ -24,6 +24,9 @@ from videocompressor.core.models import (
 )
 
 CREATION_TIME_TAG = "creation_time"
+
+#: Reporting boundary for the day/evening label; templates no longer configure it.
+DEFAULT_EVENING_START: time = time(17, 30)
 
 
 def resolve_capture_time(
@@ -70,12 +73,15 @@ def resolve_capture_time(
     return CaptureTime(when=when, raw=raw, source=source, mode=mode)
 
 
-def bucket_for(when: datetime, *, evening_start: time, timezone: str) -> Bucket:
+def bucket_for(
+    when: datetime, *, timezone: str, evening_start: time = DEFAULT_EVENING_START
+) -> Bucket:
     """Classify ``when`` as daytime or evening in ``timezone``.
 
-    Evening starts at ``evening_start`` (17:30 in the motorcycle template): exactly
-    17:30:00 is evening, 17:29:59.999999 is daytime. A naive ``when`` is read as
-    local wall-clock time in ``timezone``.
+    Evening starts at ``evening_start`` (default 17:30): exactly 17:30:00 is
+    evening, 17:29:59.999999 is daytime. The label feeds the dry-run report and
+    the GUI tables only — the single template bitrate applies to both buckets.
+    A naive ``when`` is read as local wall-clock time in ``timezone``.
     """
     zone = _load_zone(timezone)
     if when.tzinfo is None:

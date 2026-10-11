@@ -55,11 +55,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         capture = resolve_capture_time(media, mode=mode, timezone=template.timezone)
         bucket = (
-            bucket_for(
-                capture.when,
-                evening_start=template.evening_start,
-                timezone=template.timezone,
-            )
+            bucket_for(capture.when, timezone=template.timezone)
             if capture.when is not None
             else None
         )

@@ -378,9 +378,7 @@ def scenario_rerun_skip(ctx: MatrixContext, report: ScenarioReport) -> None:
             f"{source_bytes} -> {output_bytes} bytes",
         )
 
-    changed = replace(
-        TemplateSettings(), daytime_video_bitrate_kbps=1200, evening_video_bitrate_kbps=1000
-    )
+    changed = replace(TemplateSettings(), video_bitrate_kbps=1200)
     report.check(
         "the template change alters the settings hash",
         settings_hash(changed) != settings_hash(TemplateSettings()),

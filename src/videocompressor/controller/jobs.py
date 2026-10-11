@@ -24,10 +24,8 @@ from videocompressor.controller.protocol import (
     _unknown_worker,
 )
 from videocompressor.controller.store import WorkerRow
-from videocompressor.core.capture_time import bucket_for
 from videocompressor.core.config import DEFAULT_TEMPLATE_NAME
 from videocompressor.core.models import (
-    Bucket,
     ClipRecord,
     Fingerprint,
     JobState,
@@ -192,28 +190,10 @@ class JobDispatchMixin:
     def _effective_settings(
         self, template: TemplateSettings, record: ClipRecord
     ) -> dict[str, Any]:
-        """Resolve the day/evening bucket per clip (contract note on ``claim``)."""
-        when = record.capture_time.when if record.capture_time is not None else None
-        evening = False
-        if when is not None:
-            try:
-                bucket = bucket_for(
-                    when,
-                    evening_start=template.evening_start,
-                    timezone=template.timezone,
-                )
-            except ValueError as exc:
-                raise ControllerError(
-                    500, "bad_config", f"invalid template timezone: {exc}"
-                ) from exc
-            evening = bucket is Bucket.EVENING
+        """Fill the template's settings into the job; the bitrate is not per-clip."""
         return {
             "output_height": template.output_height,
-            "video_bitrate_kbps": (
-                template.evening_video_bitrate_kbps
-                if evening
-                else template.daytime_video_bitrate_kbps
-            ),
+            "video_bitrate_kbps": template.video_bitrate_kbps,
             "audio_bitrate_kbps": template.audio_bitrate_kbps,
             "ffmpeg_preset": template.ffmpeg_preset,
         }

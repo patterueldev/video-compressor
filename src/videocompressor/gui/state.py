@@ -45,11 +45,11 @@ class DisplayRow:
 class ReportState:
     """Edit overrides on top of one scan report, with derived bitrate and size.
 
-    The effective bucket and bitrate follow the selected template: a manual capture
-    time is classified with :func:`bucket_for`, and the template's day/evening
-    bitrate wins unless the operator overrode the bitrate for the clip. Overriding
-    a bitrate re-estimates the output size proportionally to the scanned estimate
-    (the scan row carries the estimate, not the clip duration).
+    The effective bitrate follows the selected template (one value for every
+    clip); a manual capture time is classified with :func:`bucket_for` for the
+    bucket label. Overriding a bitrate for a clip re-estimates the output size
+    proportionally to the scanned estimate (the scan row carries the estimate,
+    not the clip duration).
     """
 
     def __init__(self, report: ScanReport, settings: TemplateSettings) -> None:
@@ -125,11 +125,7 @@ class ReportState:
         scanned_time = row.capture_time.when if row.capture_time is not None else None
         capture = edit.capture_time if manual else scanned_time
         bucket = (
-            bucket_for(
-                capture,
-                evening_start=self.settings.evening_start,
-                timezone=self.settings.timezone,
-            )
+            bucket_for(capture, timezone=self.settings.timezone)
             if capture is not None
             else row.bucket
         )
@@ -153,10 +149,8 @@ class ReportState:
     def _bitrate(self, row: ScanRow, edit: ClipEdit, bucket: Bucket | None) -> int | None:
         if edit.bitrate_kbps is not None:
             return edit.bitrate_kbps
-        if bucket is Bucket.EVENING:
-            return self.settings.evening_video_bitrate_kbps
-        if bucket is Bucket.DAYTIME:
-            return self.settings.daytime_video_bitrate_kbps
+        if bucket is not None:
+            return self.settings.video_bitrate_kbps
         return row.video_bitrate_kbps
 
     @staticmethod

@@ -5,17 +5,23 @@ Path (macOS): ``~/Library/Application Support/Video Compressor/config.toml``.
 Reading uses the standard library (``tomllib``); writing uses ``tomli-w``. A missing
 file loads as defaults, so the app always has a usable motorcycle template.
 
+Legacy templates carried ``daytime_video_bitrate_kbps`` and
+``evening_video_bitrate_kbps`` side by side. They migrate to the single
+``video_bitrate_kbps``: the present value, or the larger one when both are present
+(a differing pair is logged as a warning). Reading never writes the file; the next
+save emits the new shape only.
+
 The GUI adds registered archive roots (issue #8) plus template create/duplicate/rename
 helpers; every helper validates its input before the caller writes the file.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import time
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -27,6 +33,8 @@ from videocompressor.core.models import (
     OriginalHandling,
     TemplateSettings,
 )
+
+_log = logging.getLogger("videocompressor.core")
 
 DEFAULT_TEMPLATE_NAME = "motorcycle"
 
@@ -118,10 +126,8 @@ def validate_template(settings: TemplateSettings) -> list[str]:
     problems: list[str] = []
     if settings.output_height < 2 or settings.output_height % 2:
         problems.append("output height must be a positive even number")
-    if settings.daytime_video_bitrate_kbps <= 0:
-        problems.append("daytime video bitrate must be positive")
-    if settings.evening_video_bitrate_kbps <= 0:
-        problems.append("evening video bitrate must be positive")
+    if settings.video_bitrate_kbps <= 0:
+        problems.append("video bitrate must be positive")
     if settings.audio_bitrate_kbps <= 0:
         problems.append("audio bitrate must be positive")
     if not settings.audio_codec.strip():
@@ -223,9 +229,7 @@ def _config_to_toml(config: AppConfig) -> dict[str, object]:
 def _template_to_toml(template: TemplateSettings) -> dict[str, object]:
     return {
         "output_height": template.output_height,
-        "daytime_video_bitrate_kbps": template.daytime_video_bitrate_kbps,
-        "evening_video_bitrate_kbps": template.evening_video_bitrate_kbps,
-        "evening_start": template.evening_start,
+        "video_bitrate_kbps": template.video_bitrate_kbps,
         "timezone": template.timezone,
         "audio_codec": template.audio_codec,
         "audio_bitrate_kbps": template.audio_bitrate_kbps,
@@ -245,7 +249,7 @@ def _config_from_toml(data: Mapping[str, object]) -> AppConfig:
     templates = data.get("templates")
     if isinstance(templates, Mapping):
         parsed = {
-            str(name): _template_from_toml(entry)
+            str(name): _template_from_toml(str(name), entry)
             for name, entry in templates.items()
             if isinstance(entry, Mapping)
         }
@@ -274,17 +278,11 @@ def _config_from_toml(data: Mapping[str, object]) -> AppConfig:
     return config
 
 
-def _template_from_toml(data: Mapping[str, object]) -> TemplateSettings:
+def _template_from_toml(name: str, data: Mapping[str, object]) -> TemplateSettings:
     defaults = TemplateSettings()
     return TemplateSettings(
         output_height=int(data.get("output_height", defaults.output_height)),
-        daytime_video_bitrate_kbps=int(
-            data.get("daytime_video_bitrate_kbps", defaults.daytime_video_bitrate_kbps)
-        ),
-        evening_video_bitrate_kbps=int(
-            data.get("evening_video_bitrate_kbps", defaults.evening_video_bitrate_kbps)
-        ),
-        evening_start=_parse_time(data.get("evening_start", defaults.evening_start)),
+        video_bitrate_kbps=_template_video_bitrate(name, data, defaults.video_bitrate_kbps),
         timezone=str(data.get("timezone", defaults.timezone)),
         audio_codec=str(data.get("audio_codec", defaults.audio_codec)),
         audio_bitrate_kbps=int(data.get("audio_bitrate_kbps", defaults.audio_bitrate_kbps)),
@@ -295,7 +293,30 @@ def _template_from_toml(data: Mapping[str, object]) -> TemplateSettings:
     )
 
 
-def _parse_time(value: object) -> time:
-    if isinstance(value, time):
-        return value
-    return time.fromisoformat(str(value))
+def _template_video_bitrate(name: str, data: Mapping[str, object], default: int) -> int:
+    """Resolve the single template bitrate, migrating legacy day/evening values.
+
+    The new key wins. Otherwise the present legacy value is used, or the larger
+    of the two when both are present; a differing pair logs one warning, because
+    the old file configured two knobs and only one survives. ``evening_start``
+    has no replacement and is ignored.
+    """
+    if "video_bitrate_kbps" in data:
+        return int(data["video_bitrate_kbps"])
+    legacy = [
+        int(data[key])
+        for key in ("daytime_video_bitrate_kbps", "evening_video_bitrate_kbps")
+        if key in data
+    ]
+    if not legacy:
+        return default
+    merged = max(legacy)
+    if len(legacy) == 2 and legacy[0] != legacy[1]:
+        _log.warning(
+            "template %r has differing day/evening bitrates (%s); using the larger "
+            "value %s kbps as the single video bitrate",
+            name,
+            " / ".join(f"{value} kbps" for value in legacy),
+            merged,
+        )
+    return merged
