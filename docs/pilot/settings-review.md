@@ -23,11 +23,11 @@ was required; this record closes checkpoint CP-1 of issue #12 without the candid
 - GUI template editor (`vc gui` → templates) — bitrate fields round-trip through the per-user
   config.
 - Per-user config: `~/Library/Application Support/Video Compressor/config.toml`,
-  `[templates.motorcycle]` (`daytime_video_bitrate_kbps`, `evening_video_bitrate_kbps`,
-  `evening_start`, `output_height`, ...).
+  `[templates.motorcycle]` (`video_bitrate_kbps`, `output_height`, ...). Issue #43 collapsed the
+  day/evening pair into this single key; a legacy file migrates to the larger of the two values.
 - Defaults for new templates: `TemplateSettings` in `src/videocompressor/core/models.py`.
 
-Daytime and evening values are independent knobs; changing either later needs no approval gate.
+The single video bitrate is one knob; changing it later needs no approval gate.
 
 ## Pilot evidence (W2)
 

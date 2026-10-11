@@ -221,8 +221,8 @@ holds is rejected with `409` (the worker must abort and discard its local work).
 #### `POST /api/v1/jobs/claim`
 
 Claim the next queued clip for a worker. `204` when nothing is available. Claiming is
-transactional: two workers racing can never both win one clip. The controller resolves the
-day/evening bucket per clip, so the job carries the effective video bitrate.
+transactional: two workers racing can never both win one clip. The controller fills the template's
+effective settings into the job; every clip carries the same video bitrate.
 
 ```json
 // request

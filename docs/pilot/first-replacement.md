@@ -42,7 +42,7 @@ run counts as a real job.
 # 0. the approved settings must be live in the per-user config
 .venv/bin/python -c \
   "from videocompressor.core.config import load_config; t=load_config().templates['motorcycle']; \
-   print(t.daytime_video_bitrate_kbps, t.evening_video_bitrate_kbps)"
+   print(t.video_bitrate_kbps)"
 
 # 1. seed exactly the chosen clip (works for clips outside the pilot selection)
 .venv/bin/python scripts/pilot_run.py enqueue \
