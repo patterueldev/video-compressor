@@ -114,7 +114,7 @@ def test_add_and_duplicate_template(config_path):
     vlog = add_template(config, "vlog")
     assert vlog == TemplateSettings()
 
-    modified = replace(config.templates[DEFAULT_TEMPLATE_NAME], evening_video_bitrate_kbps=1500)
+    modified = replace(config.templates[DEFAULT_TEMPLATE_NAME], video_bitrate_kbps=1500)
     config.templates[DEFAULT_TEMPLATE_NAME] = modified
     copy = duplicate_template(config, DEFAULT_TEMPLATE_NAME, "copy")
     assert copy == modified
@@ -122,7 +122,7 @@ def test_add_and_duplicate_template(config_path):
 
     save_config(config, config_path)
     loaded = load_config(config_path)
-    assert loaded.templates[DEFAULT_TEMPLATE_NAME].evening_video_bitrate_kbps == 1500
+    assert loaded.templates[DEFAULT_TEMPLATE_NAME].video_bitrate_kbps == 1500
     assert loaded.templates["copy"] == modified
 
 
@@ -166,15 +166,14 @@ def test_rename_template_rejects_collisions_and_unknown_names():
 def test_validate_template_reports_every_problem():
     broken = TemplateSettings(
         output_height=721,
-        daytime_video_bitrate_kbps=0,
-        evening_video_bitrate_kbps=-1,
+        video_bitrate_kbps=0,
         audio_bitrate_kbps=0,
         audio_codec="  ",
         ffmpeg_preset="",
         timezone="Nowhere/Nowhere",
     )
     problems = validate_template(broken)
-    assert len(problems) == 7
+    assert len(problems) == 6
     assert any("even" in problem for problem in problems)
     assert any("Nowhere/Nowhere" in problem for problem in problems)
     assert validate_template(TemplateSettings()) == []

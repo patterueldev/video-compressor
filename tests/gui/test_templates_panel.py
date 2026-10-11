@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import time
 
 import pytest
 
@@ -25,9 +24,7 @@ def test_editor_save_round_trips_to_the_config_file(panel):
     edited = replace(
         TemplateSettings(),
         output_height=1080,
-        daytime_video_bitrate_kbps=1200,
-        evening_video_bitrate_kbps=900,
-        evening_start=time(18, 15),
+        video_bitrate_kbps=1200,
         timezone="UTC",
         ffmpeg_preset="slow",
     )
@@ -37,6 +34,11 @@ def test_editor_save_round_trips_to_the_config_file(panel):
     assert templates.last_error is None
     loaded = load_config(config_path)
     assert loaded.templates[DEFAULT_TEMPLATE_NAME] == edited
+
+    text = config_path.read_text(encoding="utf-8")
+    assert "video_bitrate_kbps = 1200" in text
+    assert "daytime_video_bitrate_kbps" not in text
+    assert "evening_start" not in text
 
 
 def test_save_emits_the_template_name(panel):

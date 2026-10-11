@@ -47,21 +47,18 @@ Initial motorcycle defaults:
 | Setting | Initial value |
 |---|---:|
 | Output height | 720 pixels |
-| Daytime video bitrate | 800 kbps |
-| Evening/night video bitrate | 800 kbps |
-| Evening starts | 17:30 |
+| Video bitrate | 800 kbps |
 | Timezone | `Asia/Manila` |
 | Audio | AAC, 96 kbps |
 | FFmpeg preset | `medium` |
 | Original handling | Replace source after validated transfer |
 
-Day and evening/night bitrates are independently configurable. The operator set both to 800 kbps
-for every bucket (daytime, evening, dim, motion-heavy) rather than adjusting the evening value
-after a candidate-bitrate comparison; the decision is recorded in
-`docs/pilot/settings-review.md` and remains editable per template. The app should estimate output
-size from clip duration and configured video plus audio bitrates. For reference, 800 kbps video
-alone is about 90 MB for 15 minutes; AAC audio and container overhead add to that, so actual size
-depends on duration and settings.
+One video bitrate applies to every clip. The operator set 800 kbps for all buckets (daytime,
+evening, dim, motion-heavy) rather than adjusting an evening value after a candidate-bitrate
+comparison; the decision is recorded in `docs/pilot/settings-review.md` and the value remains
+editable per template. The app should estimate output size from clip duration and configured video
+plus audio bitrates. For reference, 800 kbps video alone is about 90 MB for 15 minutes; AAC audio
+and container overhead add to that, so actual size depends on duration and settings.
 
 ## Capture time and classification
 
@@ -69,7 +66,8 @@ depends on duration and settings.
   `ffprobe`; show unreadable or unsupported files as skipped with a reason.
 - Convert timestamps with an explicit timezone offset into the configured timezone. Interpret
   timestamps without an offset as local wall-clock time in that timezone.
-- Apply the daytime bitrate before 17:30 and the evening/night bitrate from 17:30 onward.
+- Label each clip daytime before 17:30 and evening/night from 17:30 onward; the label feeds the
+  dry-run report only, and the single configured video bitrate applies to both.
 - Send missing or conflicting timestamps to a review queue and do not encode those files.
 - Before a full run, compare the app's detected capture times against several known clips and
   confirm the timezone interpretation.

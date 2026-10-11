@@ -104,7 +104,7 @@ def test_template_change_marks_the_scan_stale(panel):
     panel.set_report(make_report([make_scan_row()]), TemplateSettings())
     assert panel.stale_notice() == ""
 
-    panel.state().set_settings(replace(TemplateSettings(), evening_video_bitrate_kbps=1500))
+    panel.state().set_settings(replace(TemplateSettings(), video_bitrate_kbps=1500))
     panel.refresh()
 
     assert "run the dry run again" in panel.stale_notice()

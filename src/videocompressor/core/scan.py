@@ -132,9 +132,7 @@ def settings_hash(settings: TemplateSettings) -> str:
     """Deterministic hash of the encoding template fields (marker/manifest key)."""
     payload = {
         "output_height": settings.output_height,
-        "daytime_video_bitrate_kbps": settings.daytime_video_bitrate_kbps,
-        "evening_video_bitrate_kbps": settings.evening_video_bitrate_kbps,
-        "evening_start": settings.evening_start.isoformat(),
+        "video_bitrate_kbps": settings.video_bitrate_kbps,
         "timezone": settings.timezone,
         "audio_codec": settings.audio_codec,
         "audio_bitrate_kbps": settings.audio_bitrate_kbps,
@@ -276,16 +274,8 @@ def scan_folder(
             else:
                 capture = inspection.capture_time
                 assert capture.when is not None
-                bucket = bucket_for(
-                    capture.when,
-                    evening_start=settings.evening_start,
-                    timezone=settings.timezone,
-                )
-                video_bitrate_kbps = (
-                    settings.evening_video_bitrate_kbps
-                    if bucket is Bucket.EVENING
-                    else settings.daytime_video_bitrate_kbps
-                )
+                bucket = bucket_for(capture.when, timezone=settings.timezone)
+                video_bitrate_kbps = settings.video_bitrate_kbps
                 media = inspection.media
                 has_audio = media is not None and any(
                     stream.codec_type == "audio" for stream in media.streams

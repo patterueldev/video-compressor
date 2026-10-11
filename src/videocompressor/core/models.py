@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -55,7 +55,11 @@ class CaptureTimeMode(StrEnum):
 
 
 class Bucket(StrEnum):
-    """Day/evening bitrate bucket for one clip (issue #2)."""
+    """Day/evening classification label for one clip (issue #2).
+
+    The single template bitrate applies to both buckets; the label only feeds
+    the dry-run report and the GUI tables.
+    """
 
     DAYTIME = "daytime"
     EVENING = "evening"
@@ -72,9 +76,7 @@ class TemplateSettings:
     """Encoding template; defaults are the motorcycle template from plan.md."""
 
     output_height: int = 720
-    daytime_video_bitrate_kbps: int = 800
-    evening_video_bitrate_kbps: int = 800
-    evening_start: time = time(17, 30)
+    video_bitrate_kbps: int = 800
     timezone: str = "Asia/Manila"
     audio_codec: str = "aac"
     audio_bitrate_kbps: int = 96

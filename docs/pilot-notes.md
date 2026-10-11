@@ -69,8 +69,8 @@ daytime.
 Operator check: the exact ride times could not be recalled from memory, so the in-file,
 satellite-derived evidence is treated as authoritative for this decision. Camera-clock drift of
 +1…11 min against GPS was observed; decisions within ~15 min of 17:30 can therefore flip with the
-camera clock. That is acceptable for now because day and evening bitrates are identical
-(800 kbps), and the evening start remains configurable.
+camera clock. That is acceptable because one video bitrate applies to every clip; the
+day/evening label only feeds the dry-run report.
 
 ## Classification anomalies
 
