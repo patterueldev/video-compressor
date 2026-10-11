@@ -65,6 +65,7 @@ def run(args: argparse.Namespace) -> int:
         host=host,
         port=port,
         templates=config.templates,
+        roots=lambda: config.roots,
     )
     server.start_background()
     print(f"vc controller: listening on {server.base_url}")

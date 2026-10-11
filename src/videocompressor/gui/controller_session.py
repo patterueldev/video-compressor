@@ -90,6 +90,7 @@ def start_controller_session(
         host=config.controller.host,
         port=config.controller.port,
         templates=config.templates,
+        roots=lambda: config.roots,
     )
     try:
         server.start_background()

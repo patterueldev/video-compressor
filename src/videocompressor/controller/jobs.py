@@ -30,6 +30,7 @@ from videocompressor.core.models import (
     Fingerprint,
     JobState,
     TemplateSettings,
+    destination_to_dict,
 )
 
 #: Progress phases a worker reports that also advance the manifest stage.
@@ -85,20 +86,24 @@ class JobDispatchMixin:
                 root_id=record.root_id,
                 relative_path=record.relative_path,
             )
-            return {
-                "job": {
-                    "root_id": record.root_id,
-                    "relative_path": record.relative_path,
-                    "template_id": template_id,
-                    "settings": settings,
-                    "settings_hash": settings_hash,
-                    "capture_time": (
-                        capture_time.when.isoformat()
-                        if capture_time is not None and capture_time.when is not None
-                        else None
-                    ),
-                }
+            job: dict[str, Any] = {
+                "root_id": record.root_id,
+                "relative_path": record.relative_path,
+                "template_id": template_id,
+                "settings": settings,
+                "settings_hash": settings_hash,
+                "capture_time": (
+                    capture_time.when.isoformat()
+                    if capture_time is not None and capture_time.when is not None
+                    else None
+                ),
             }
+            if record.destination is not None:
+                # Convert-flow jobs carry the destination and the delete flag;
+                # legacy/script-seeded claims omit both (worker contract, #40).
+                job["destination"] = destination_to_dict(record.destination)
+                job["delete_original"] = record.delete_original
+            return {"job": job}
 
     def complete(self, payload: Mapping[str, Any]) -> None:
         """Mark the held clip complete with its output fingerprint."""
