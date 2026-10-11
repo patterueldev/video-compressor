@@ -55,11 +55,13 @@ Initial motorcycle defaults:
 | FFmpeg preset | `medium` |
 | Original handling | Replace source after validated transfer |
 
-Day and evening/night bitrates are independently configurable. The initial evening setting is
-provisional; adjust it after personally checking pilot footage at candidate bitrates, especially
-dim and motion-heavy clips. The app should estimate output size from clip duration and configured
-video plus audio bitrates. For reference, 800 kbps video alone is about 90 MB for 15 minutes; AAC
-audio and container overhead add to that, so actual size depends on duration and settings.
+Day and evening/night bitrates are independently configurable. The operator set both to 800 kbps
+for every bucket (daytime, evening, dim, motion-heavy) rather than adjusting the evening value
+after a candidate-bitrate comparison; the decision is recorded in
+`docs/pilot/settings-review.md` and remains editable per template. The app should estimate output
+size from clip duration and configured video plus audio bitrates. For reference, 800 kbps video
+alone is about 90 MB for 15 minutes; AAC audio and container overhead add to that, so actual size
+depends on duration and settings.
 
 ## Capture time and classification
 
@@ -127,7 +129,8 @@ failed, and review-needed clips.
 3. Process pilot clips covering daytime, evening, motion-heavy, and dim footage into a separate
    pilot output area so the originals remain available while settings are reviewed.
 4. Personally compare pilot detail with the source clips, especially signs and license plates, then
-   adjust the motorcycle template bitrates.
+   adjust the motorcycle template bitrates. (Decision already made: 800 kbps for all buckets and
+   configurable; see `docs/pilot/settings-review.md`.)
 5. Replace originals only after pilot settings are approved. Confirm local scratch encoding,
    verified transfer-back, recoverable replacement, and cleanup on one clip before enabling the
    full queue.
