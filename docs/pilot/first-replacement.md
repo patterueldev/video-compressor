@@ -1,11 +1,15 @@
 # First real replacement — watched runbook (issue #12)
 
-This is the plan.md pilot step 5 runbook: one real clip replaced end-to-end with
-the operator watching — scratch encode → verified transfer → recoverable swap →
-cleanup. It is written to be executed **after** the pilot encodes and the
-settings review; the sections at the bottom are filled in as the evidence
-record of that run. Placeholders are used throughout: never commit real share
-paths, hostnames, or tokens.
+> **Status: superseded.** The epic #38 convert flow replaced the #12 ceremony this runbook was
+> written for; the one remaining real-clip checkpoint is the #44 acceptance run (delete off, then
+> delete on a copy). The page is kept as an optional same-folder/recovery drill and as the
+> historical evidence record — nothing below is a required gate anymore.
+
+This is the watched first-replacement runbook from the superseded #12 ceremony: one real clip
+replaced end-to-end with the operator watching — scratch encode → verified transfer → recoverable
+swap → cleanup. It is written to be executed **after** the settings review; the sections at the
+bottom are filled in as the evidence record of that run. Placeholders are used throughout: never
+commit real share paths, hostnames, or tokens.
 
 ## Preconditions
 
@@ -107,7 +111,7 @@ Checklist:
 | Field | Value |
 | --- | --- |
 | Clip (archive-relative) | |
-| Settings used (day/evening kbps) | |
+| Settings used (video kbps) | |
 | Source size before → after | |
 | Encode time (pass 1 / pass 2) | |
 | Validation failures | |

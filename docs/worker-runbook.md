@@ -37,7 +37,9 @@ archive = "/path/to/archive"           # one entry per controller root id
 Notes:
 
 - `[roots]` keys must match the manifest's registered root ids (for example `archive` or
-  `camera`). A claimed job whose root is not mapped fails with a mapping error.
+  `camera`). A claimed job whose root is not mapped fails with a mapping error. Destination
+  output roots must be mapped here too: a job writes into its destination only when this node
+  can resolve that root.
 - `token_env` is preferred; export `VC_WORKER_TOKEN` before starting the worker. Get the token
   from the controller machine with `vc controller --print-token` and pass it out of band.
 - `heartbeat_seconds` is optional (default 15 s, adopted from the controller). Lower values make
