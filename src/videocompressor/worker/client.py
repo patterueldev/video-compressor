@@ -52,7 +52,13 @@ class ControllerUnavailable(RuntimeError):
 
 @dataclass(frozen=True)
 class ClaimedJob:
-    """One job as delivered by ``POST /jobs/claim``."""
+    """One job as delivered by ``POST /jobs/claim``.
+
+    ``destination`` is the raw convert-flow destination spec (issue #40; decoded
+    by :mod:`videocompressor.worker.destination`), ``None`` for a legacy claim.
+    ``delete_original`` is ``None`` when the claim carried no flag (legacy or an
+    omitted default), and explicit ``True``/``False`` otherwise.
+    """
 
     root_id: str
     relative_path: str
@@ -60,6 +66,8 @@ class ClaimedJob:
     settings: Mapping[str, Any] = field(default_factory=dict)
     settings_hash: str | None = None
     capture_time: str | None = None
+    destination: Mapping[str, Any] | None = None
+    delete_original: bool | None = None
 
 
 class ControllerClient:
@@ -126,6 +134,8 @@ class ControllerClient:
         if not isinstance(root_id, str) or not isinstance(relative_path, str):
             raise ControllerError(200, "bad_response", "claim response carried a malformed job")
         settings = payload.get("settings")
+        destination = payload.get("destination")
+        delete_original = payload.get("delete_original")
         return ClaimedJob(
             root_id=root_id,
             relative_path=relative_path,
@@ -133,6 +143,8 @@ class ControllerClient:
             settings=dict(settings) if isinstance(settings, Mapping) else {},
             settings_hash=_optional_str(payload.get("settings_hash")),
             capture_time=_optional_str(payload.get("capture_time")),
+            destination=dict(destination) if isinstance(destination, Mapping) else None,
+            delete_original=delete_original if isinstance(delete_original, bool) else None,
         )
 
     def complete(self, worker_id: str, job: ClaimedJob, output: Fingerprint) -> None:

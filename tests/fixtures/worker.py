@@ -28,14 +28,28 @@ DEFAULT_SETTINGS = {
 }
 
 
-def make_job(relative_path: str = CLIP, *, root_id: str = "archive", **settings: Any) -> ClaimedJob:
-    """Build a claim payload for tests."""
+def make_job(
+    relative_path: str = CLIP,
+    *,
+    root_id: str = "archive",
+    destination: dict[str, Any] | None = None,
+    delete_original: bool | None = None,
+    **settings: Any,
+) -> ClaimedJob:
+    """Build a claim payload for tests.
+
+    ``destination`` is the raw convert-flow spec (issue #40); ``None`` keeps the
+    legacy same-folder swap. ``delete_original`` is tri-state: ``None`` means the
+    claim carried no flag.
+    """
     return ClaimedJob(
         root_id=root_id,
         relative_path=relative_path,
         template_id="motorcycle",
         settings={**DEFAULT_SETTINGS, **settings},
         settings_hash="settings-hash",
+        destination=destination,
+        delete_original=delete_original,
     )
 
 

@@ -17,7 +17,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from videocompressor.core.ffmpeg import (
     EncodeError,
@@ -44,6 +44,7 @@ from videocompressor.core.replace import (
     SourceMissingError,
     SwapError,
     VerificationError,
+    ffprobe_readable,
     replace_with_verified_copy,
 )
 from videocompressor.core.validate import (
@@ -53,6 +54,8 @@ from videocompressor.core.validate import (
 )
 from videocompressor.worker.client import ClaimedJob
 from videocompressor.worker.config import MappingError, WorkerConfig
+from videocompressor.worker.destination import DestinationJob, plan_destination
+from videocompressor.worker.outcome import JobOutcome
 from videocompressor.worker.scratch import (
     CopyStopped,
     copy_with_stop,
@@ -70,18 +73,6 @@ __all__ = ["JobOutcome", "JobPipeline", "PipelineSeams"]
 
 _log = logging.getLogger("videocompressor.worker")
 
-Disposition = Literal["complete", "review", "failed", "requeue"]
-
-
-@dataclass(frozen=True)
-class JobOutcome:
-    """What the agent should report for one settled job."""
-
-    disposition: Disposition
-    detail: str | None = None
-    output: Fingerprint | None = None
-    pilot: bool = False
-
 
 @dataclass(frozen=True)
 class PipelineSeams:
@@ -94,6 +85,7 @@ class PipelineSeams:
     validate: Callable[..., ValidationResult] = validate_output
     recover: Callable[..., RecoveryReport] = reconcile_source
     scratch_gate: Callable[..., ScratchSpaceReport] = check_scratch_space
+    readable: Callable[[Path], bool] = ffprobe_readable
 
 
 class JobPipeline:
@@ -131,7 +123,20 @@ class JobPipeline:
         except MappingError as exc:
             return JobOutcome("failed", f"mapping: {exc}")
 
-        recovered = self._recover(job, source)
+        planned = plan_destination(
+            job,
+            self._config,
+            source,
+            pilot=self._config.pilot_root is not None,
+            fingerprint=self._seams.fingerprint,
+            validate=self._seams.validate,
+            readable=self._seams.readable,
+        )
+        if isinstance(planned, JobOutcome):
+            return planned
+        destination = planned
+
+        recovered = self._recover(job, source, destination_job=destination)
         if isinstance(recovered, JobOutcome):
             return recovered
         source = recovered
@@ -152,6 +157,13 @@ class JobPipeline:
         source_media = probed
         if source_media.duration_s is None:
             return JobOutcome("review", "source reports no duration")
+
+        if destination is not None:
+            existing = destination.prepare(
+                settings, source_fp, facts_from_media_info(source_media)
+            )
+            if existing is not None:
+                return existing
 
         estimated = estimate_output_bytes(
             source_media.duration_s, settings.video_bitrate_kbps, settings.audio_bitrate_kbps
@@ -223,6 +235,13 @@ class JobPipeline:
         self._emit_phase("transferring")
         if self._config.pilot_root is not None:
             return self._deliver_pilot(job, scratch_output, stop_event)
+        if destination is not None:
+            try:
+                return destination.deliver(
+                    scratch_output, job_id=job_id, stop_event=stop_event
+                )
+            except CopyStopped as exc:
+                return JobOutcome("requeue", f"stopped: {exc}")
 
         try:
             result = replace_at_source(
@@ -255,12 +274,22 @@ class JobPipeline:
         self._write_marker(job, source, result.output)
         return JobOutcome("complete", output=result.output)
 
-    def _recover(self, job: ClaimedJob, source: Path) -> Path | JobOutcome:
+    def _recover(
+        self,
+        job: ClaimedJob,
+        source: Path,
+        *,
+        destination_job: DestinationJob | None = None,
+    ) -> Path | JobOutcome:
         """Reconcile crash artifacts before working; returns the source or an outcome."""
         try:
             report = self._seams.recover(source)
         except Exception as exc:  # recovery must never abort a job unmanaged
             return JobOutcome("review", f"recovery failed: {exc}")
+        if report.outcome is RecoveryOutcome.SOURCE_MISSING and destination_job is not None:
+            resumed = destination_job.resume_without_source()
+            if resumed is not None:
+                return resumed
         if report.outcome in (RecoveryOutcome.SOURCE_MISSING, RecoveryOutcome.NEEDS_REVIEW):
             return JobOutcome("review", f"recovery: {report.detail or report.outcome}")
         if report.outcome is RecoveryOutcome.REPLACEMENT_CONFIRMED:
