@@ -32,6 +32,7 @@ _ROUTES: tuple[tuple[str, tuple[object, ...], str], ...] = (
     ("POST", ("workers", _WORKER_ID_SEGMENT, "heartbeat"), "heartbeat"),
     ("POST", ("workers", _WORKER_ID_SEGMENT, "stop"), "stop"),
     ("POST", ("workers", _WORKER_ID_SEGMENT, "resume"), "resume"),
+    ("POST", ("jobs",), "enqueue"),
     ("POST", ("jobs", "claim"), "claim"),
     ("POST", ("jobs", "complete"), "complete"),
     ("POST", ("jobs", "fail"), "fail"),
@@ -110,6 +111,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
         if name == "resume":
             controller.resume_worker(captured["worker_id"])
             return 204, None
+        if name == "enqueue":
+            return 200, controller.enqueue(payload)
         if name == "claim":
             job = controller.claim(_require_str(payload, "worker_id"))
             return (200, job) if job is not None else (204, None)

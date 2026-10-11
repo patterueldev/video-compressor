@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 class JobState(StrEnum):
@@ -69,6 +69,89 @@ class OriginalHandling(StrEnum):
     """What happens to the source file after a validated replacement."""
 
     REPLACE_AFTER_VALIDATED_TRANSFER = "replace_after_validated_transfer"
+
+
+class DestinationKind(StrEnum):
+    """Where a direct-conversion output is placed (issue #39).
+
+    ``same_folder`` is the verified swap: the output replaces the source at its
+    own path. ``output_root`` places the output under a registered root plus a
+    root-relative folder.
+    """
+
+    SAME_FOLDER = "same_folder"
+    OUTPUT_ROOT = "output_root"
+
+
+def is_safe_relative_path(value: str, *, allow_empty: bool = False) -> bool:
+    """Whether ``value`` is a safe relative POSIX path (no escapes or backslashes)."""
+    if not value:
+        return allow_empty
+    if "\\" in value:
+        return False
+    pure = PurePosixPath(value)
+    return not pure.is_absolute() and all(part not in ("", ".", "..") for part in pure.parts)
+
+
+@dataclass(frozen=True)
+class Destination:
+    """Destination spec for a direct-conversion job (issue #39).
+
+    Names the output folder only; the output filename and collision handling
+    belong to the worker pipeline (issue #40). An ``output_root`` destination
+    resolves ``root_id`` + ``relative_path`` per node; an empty ``relative_path``
+    means the node mirrors the source's archive-relative path under the root
+    (the worker's fallback). ``same_folder`` replaces the source at its own path.
+    """
+
+    kind: DestinationKind
+    root_id: str | None = None
+    relative_path: str = ""
+
+    def __post_init__(self) -> None:
+        if self.kind is DestinationKind.SAME_FOLDER:
+            if self.root_id is not None or self.relative_path:
+                raise ValueError("a same-folder destination takes no root or relative path")
+            return
+        if not self.root_id:
+            raise ValueError("an output-root destination needs a non-empty root_id")
+        if not is_safe_relative_path(self.relative_path, allow_empty=True):
+            raise ValueError(f"unsafe destination relative path {self.relative_path!r}")
+
+
+def destination_to_dict(destination: Destination | None) -> dict[str, object] | None:
+    """JSON-ready destination spec; ``None`` (legacy jobs) stays ``None``.
+
+    Only meaningful keys are emitted, matching the worker's decoder: an absent
+    ``relative_path`` means "mirror the source's archive-relative path".
+    """
+    if destination is None:
+        return None
+    payload: dict[str, object] = {"kind": str(destination.kind)}
+    if destination.root_id is not None:
+        payload["root_id"] = destination.root_id
+    if destination.relative_path:
+        payload["relative_path"] = destination.relative_path
+    return payload
+
+
+def destination_from_dict(payload: object) -> Destination | None:
+    """Parse a destination spec from its JSON form; ``None`` stays ``None``."""
+    if payload is None:
+        return None
+    if not isinstance(payload, Mapping):
+        raise ValueError("destination must be an object")
+    kind = payload.get("kind")
+    if kind not in {member.value for member in DestinationKind}:
+        raise ValueError(f"unknown destination kind {kind!r}")
+    root_id = payload.get("root_id")
+    relative_path = payload.get("relative_path", "")
+    if root_id is not None and not isinstance(root_id, str):
+        raise ValueError("destination root_id must be a string")
+    if not isinstance(relative_path, str):
+        raise ValueError("destination relative_path must be a string")
+    return Destination(kind=DestinationKind(kind), root_id=root_id, relative_path=relative_path)
+
 
 
 @dataclass(frozen=True)
@@ -180,7 +263,7 @@ class MediaInfo:
 
 @dataclass(frozen=True)
 class ClipRecord:
-    """One row of the central manifest (created in #3, updated in #5-#7)."""
+    """One row of the central manifest (created in #3, updated through #39)."""
 
     root_id: str
     relative_path: str  # archive-root-relative POSIX path
@@ -196,6 +279,8 @@ class ClipRecord:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     completed_at: datetime | None = None
+    destination: Destination | None = None  # None = legacy replace-at-source job
+    delete_original: bool = False
 
 
 @dataclass(frozen=True)

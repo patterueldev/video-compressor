@@ -6,9 +6,9 @@ endpoints documented there (``GET /workers``, ``GET /summary``, worker
 :class:`ControllerServer`, so the GUI can host the controller and call it
 directly while worker nodes use HTTP.
 
-The facade composes the worker-registry, job-dispatch, and lease-sweep mixins;
-HTTP plumbing lives in ``controller/http.py`` and the error type plus payload
-helpers live in ``controller/protocol.py``.
+The facade composes the worker-registry, job-dispatch, enqueue, and lease-sweep
+mixins; HTTP plumbing lives in ``controller/http.py`` and the error type plus
+payload helpers live in ``controller/protocol.py``.
 
 The durable queue is the SQLite manifest (``core/manifest.py``, issue #3);
 tests inject :class:`MemoryManifest` when they want a lightweight double.
@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import secrets
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,7 @@ from videocompressor.controller.constants import (
     Clock,
     system_now,
 )
+from videocompressor.controller.enqueue import JobEnqueueMixin
 from videocompressor.controller.http import _ControllerHTTPServer
 from videocompressor.controller.jobs import JobDispatchMixin
 from videocompressor.controller.memory_manifest import MemoryManifest
@@ -40,8 +41,16 @@ from videocompressor.controller.registry import WorkerRegistryMixin
 from videocompressor.controller.store import ControllerStore, EventRow
 from videocompressor.controller.sweep import LeaseSweepMixin
 from videocompressor.core.config import DEFAULT_TEMPLATE_NAME
+from videocompressor.core.fingerprint import fingerprint_file
 from videocompressor.core.manifest import Manifest
-from videocompressor.core.models import Classification, ClipRecord, JobState, TemplateSettings
+from videocompressor.core.models import (
+    ArchiveRoot,
+    Classification,
+    ClipRecord,
+    Fingerprint,
+    JobState,
+    TemplateSettings,
+)
 
 __all__ = ["ControllerError", "ControllerServer", "new_token", "open_manifest"]
 
@@ -51,6 +60,11 @@ _log = logging.getLogger("videocompressor.controller")
 def new_token() -> str:
     """Generate a fresh bearer token for the controller API."""
     return secrets.token_urlsafe(32)
+
+
+def _no_roots() -> tuple[ArchiveRoot, ...]:
+    """Default roots provider: no registered roots, so enqueue rejects every file."""
+    return ()
 
 
 def open_manifest(
@@ -71,7 +85,7 @@ def open_manifest(
         return MemoryManifest.open(db_path, clock=clock, lease_ttl_seconds=lease_ttl_seconds), False
 
 
-class ControllerServer(WorkerRegistryMixin, JobDispatchMixin, LeaseSweepMixin):
+class ControllerServer(WorkerRegistryMixin, JobDispatchMixin, JobEnqueueMixin, LeaseSweepMixin):
     """Serve the controller contract v1 and expose the same operations in-process."""
 
     def __init__(
@@ -83,6 +97,8 @@ class ControllerServer(WorkerRegistryMixin, JobDispatchMixin, LeaseSweepMixin):
         host: str = "127.0.0.1",
         port: int = 8765,
         templates: Mapping[str, TemplateSettings] | None = None,
+        roots: Callable[[], Sequence[ArchiveRoot]] | None = None,
+        fingerprint: Callable[[Path], Fingerprint] = fingerprint_file,
         clock: Clock = system_now,
         lease_ttl_seconds: int = LEASE_TTL_SECONDS,
         sweep_interval_seconds: float = SWEEP_INTERVAL_SECONDS,
@@ -96,6 +112,8 @@ class ControllerServer(WorkerRegistryMixin, JobDispatchMixin, LeaseSweepMixin):
             self.templates = dict(templates)
         else:
             self.templates = {DEFAULT_TEMPLATE_NAME: TemplateSettings()}
+        self._roots = roots if roots is not None else _no_roots
+        self._fingerprint = fingerprint
         self.lease_ttl_seconds = lease_ttl_seconds
         self.sweep_interval_seconds = sweep_interval_seconds
         self._clock = clock

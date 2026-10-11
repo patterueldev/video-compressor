@@ -35,12 +35,12 @@ Rules:
 Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and the test fixtures):
 
 - `core`: `models` (dataclasses/enums), `probe`, `capture_time`, `fingerprint`, `scan`,
-  `manifest` (SQLite queue), `markers`, `ffmpeg` (two-pass x265 encode), `validate`, `replace`,
-  `place` (destination placement), `records` (destination completion records), `recover`,
-  `config` (per-user TOML).
-- `controller`: `server` (facade), `http` (HTTP plumbing), `registry`/`jobs`/`sweep` (mixins),
-  `store` (SQLite bookkeeping), `memory_manifest` (in-memory double/fallback), `protocol`
-  (payload rules), `constants`.
+  `manifest` (SQLite queue), `manifest_schema` (queue DDL, migration, row codecs), `markers`,
+  `ffmpeg` (two-pass x265 encode), `validate`, `replace`, `place` (destination placement),
+  `records` (destination completion records), `recover`, `config` (per-user TOML).
+- `controller`: `server` (facade), `http` (HTTP plumbing),
+  `registry`/`jobs`/`enqueue`/`sweep` (mixins), `store` (SQLite bookkeeping),
+  `memory_manifest` (in-memory double/fallback), `protocol` (payload rules), `constants`.
 - `gui`: `app`, `main_window`, `drop_zone`, `roots_panel`, `templates_panel`, `clip_tables`, and
   `scan_runner` widgets plus the pure Python `state` and `scan_service` (issue #8) and the job
   monitor (`monitor_app`, `monitor_window`, `monitor_panel`, `monitor_tables`, `monitor_runner`,
@@ -61,14 +61,18 @@ suites.
 `tests/test_imports.py` checks that every module imports without the `gui` extra;
 `tests/test_architecture.py` checks cross-package import direction and file-size budgets
 (`src/**` ≤ 400 lines, `tests/**` ≤ 450). The audited over-budget files may only shrink:
-`core/manifest.py` (561), `core/scan.py` (474), `core/replace.py` (471), `core/ffmpeg.py` (470)
-at #23; the recommended first seam for `manifest.py` is the DDL/schema plus row codec.
+`core/manifest.py` (476), `core/scan.py` (464), `core/replace.py` (471), `core/ffmpeg.py` (470)
+at #39; the recommended first seam for `manifest.py` was the DDL/schema plus row codec, now
+extracted into `core/manifest_schema.py`.
 
 ## Data flow
 
 dropped folder → scan + classify (#2, #3) → queue (manifest) → worker claims a job (#7) → copy to
 local scratch → two-pass x265 encode (#4) → validate (#4) → transfer back + replace (#5) → mark
 complete in the manifest (#3) → run summary (#9)
+
+Direct conversions take a shorter path: explicit files → `POST /api/v1/jobs` (issue #39) →
+queue (manifest) → the same worker claim/pipeline below.
 
 Convert jobs (#40) may instead carry a destination — a registered output root, a custom folder,
 or the source's own folder — and delete the original only after the destination file exists and
@@ -196,7 +200,8 @@ over the local network.
   stored in the per-user config; workers receive it out of band and it is never committed.
   Missing or invalid token → `401`.
 - Conventions: jobs are identified by `root_id` + `relative_path` (archive-root-relative POSIX
-  path). Worker ids match `[A-Za-z0-9_.-]{1,64}`.
+  path). Worker ids match `[A-Za-z0-9_.-]{1,64}`. Direct-conversion jobs (issue #39) additionally
+  carry a destination spec and a `delete_original` flag; their identity stays the pair.
 - Errors: `{"error": {"code": "<slug>", "message": "<human text>"}}` with `400` malformed body,
   `401` auth failure, `404` unknown worker, `409` lease conflict.
 
@@ -279,10 +284,18 @@ effective settings into the job; every clip carries the same video bitrate.
       "ffmpeg_preset": "medium"
     },
     "settings_hash": "<hash of effective settings>",
-    "capture_time": "2024-06-14T17:41:00+08:00"
+    "capture_time": "2024-06-14T17:41:00+08:00",
+    "destination": {"kind": "output_root", "root_id": "compressed", "relative_path": "2026-10"},
+    "delete_original": false
   }
 }
 ```
+
+`destination` and `delete_original` (issue #39) carry the direct-conversion job spec for
+enqueued convert jobs; legacy or script-seeded clips omit both fields and keep the
+replace-at-source flow. The destination object carries `kind` plus, for an output root,
+`root_id` and an optional `relative_path`. Worker clients ignore fields they do not use, so the
+addition stays backwards compatible.
 
 #### `POST /api/v1/jobs/complete`
 
@@ -315,6 +328,84 @@ the clip to the queue (used to acknowledge an operator stop). `204` on success.
   "disposition": "review"
 }
 ```
+
+#### `POST /api/v1/jobs`
+
+Batch enqueue of explicit files for direct conversions (issue #39; the convert flow of epic #38).
+The caller expands directories and filters media; the controller never walks the filesystem.
+Every accepted file becomes a durable `queued` job that the existing workers claim through
+`POST /api/v1/jobs/claim`.
+
+```json
+// request
+{
+  "files": [
+    {"root_id": "archive", "relative_path": "VIDEOS/MOTORCYCLE/GS010001.MP4"},
+    {"root_id": "archive", "relative_path": "IMPORTS/GOPRO-20261010/GH011016.MP4"}
+  ],
+  "destination": {"kind": "output_root", "root_id": "compressed", "relative_path": "2026-10"},
+  "template_id": "motorcycle",
+  "delete_original": false
+}
+// response 200
+{
+  "jobs": [
+    {"job_id": "archive:VIDEOS/MOTORCYCLE/GS010001.MP4",
+     "root_id": "archive", "relative_path": "VIDEOS/MOTORCYCLE/GS010001.MP4",
+     "status": "queued", "reason": null},
+    {"job_id": "archive:IMPORTS/GOPRO-20261010/GH011016.MP4",
+     "root_id": "archive", "relative_path": "IMPORTS/GOPRO-20261010/GH011016.MP4",
+     "status": "skipped", "reason": "already_complete"}
+  ],
+  "queued": 1, "skipped": 1, "rejected": 0
+}
+```
+
+- `files` — required, non-empty list of explicit files as `root_id` + archive-relative POSIX
+  path. A directory entry is rejected (`not_a_file`), never expanded here.
+- `destination` — required destination spec (below).
+- `template_id` — optional; defaults to the default template; must be configured.
+- `delete_original` — optional boolean; default `false` (keep originals). A `same_folder`
+  destination replaces the source, so it requires `delete_original: true`.
+
+Per-file `status`/`reason`:
+
+| status | reason | meaning |
+| --- | --- | --- |
+| `queued` | `null` | a new `queued` record was created |
+| `skipped` | `already_queued` | a queued or in-flight record exists (idempotent re-enqueue) |
+| `skipped` | `already_complete` | a completed record exists (never re-encode silently) |
+| `skipped` | `needs_review` | the record is parked in review |
+| `skipped` | `previously_failed` | the record failed before; retry is a follow-up |
+| `skipped` | `duplicate_in_batch` | the same pair is repeated in this request |
+| `rejected` | `unknown_root` | the source `root_id` is not registered on the controller |
+| `rejected` | `unsafe_relative_path` | absolute, `..`, empty-segment, or escaping path |
+| `rejected` | `not_a_file` | the resolved path is missing or not a regular file |
+| `rejected` | `unreadable` | the file exists but fingerprinting failed |
+
+The batch-level fields are validated before anything is written, so a malformed request
+(`400 bad_request`) writes nothing. Re-enqueue is idempotent: an existing record is never
+rewritten by an enqueue. `job_id` is informational (`<root_id>:<relative_path>`); the durable
+identity stays the pair. Each request logs one `info` event with queued/skipped/rejected counts.
+
+Destination specs name the output **folder** only; the output filename and collision handling
+belong to the worker pipeline (#40).
+
+| Spec | Meaning |
+| --- | --- |
+| `{"kind": "same_folder"}` | the verified swap: the output replaces the source at its own path; requires `delete_original: true` |
+| `{"kind": "output_root", "root_id": "<id>", "relative_path": "<folder>"}` | a registered output root plus a root-relative POSIX folder; an omitted `relative_path` mirrors the source's archive-relative path |
+
+The worker also decodes a node-local `custom_folder` spec
+(`{"kind": "custom_folder", "path": "<absolute folder>"}`, issue #40); this endpoint does not
+produce it yet (candidate follow-up). The operator's "custom folder" choice (epic #38) can be
+expressed as an `output_root` destination: the caller resolves the picked folder through the
+registered roots (`core.config.root_for_folder`). `output_root` sources and destinations never
+carry host paths; every node resolves `root_id` + `relative_path` through its own worker
+`[roots]` mapping, so the Mac's mounted path and the homeserver's local path run the same job.
+`delete_original` records the operator's choice; the pipeline may delete a source only after its
+output exists at the destination and validates (#40), and a `same_folder` job always consumes
+the source through the verified swap.
 
 #### `POST /api/v1/workers/{worker_id}/stop`
 
@@ -356,3 +447,13 @@ claimable twice while a live lease or unresolved recovery exists.
 
 Payloads are intentionally minimal: adding optional fields is backwards compatible; removing or
 renaming a field requires contract v2.
+
+## Queue storage and migration (issue #39)
+
+The durable queue is the SQLite manifest (`core/manifest.py`); destination specs and the
+`delete_original` flag live on the job row itself (`destination_json`, `delete_original`), so a
+job's identity, lease state, and conversion spec never drift apart. `core/manifest_schema.py`
+owns the clips/events DDL, the row codecs, and an idempotent migration that adds the conversion
+columns the first time an older database is opened writable. A read-only open never migrates and
+tolerates the missing columns, so a dry `vc scan` keeps working before the controller upgrades;
+old code can still read a migrated database because the added columns are ignored.

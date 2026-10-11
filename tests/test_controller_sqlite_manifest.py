@@ -9,11 +9,19 @@ from __future__ import annotations
 
 import pytest
 
+from fixtures.controller import ApiClient
 from videocompressor.controller.server import ControllerServer, open_manifest
 from videocompressor.controller.store import ControllerStore
 from videocompressor.core import manifest as manifest_module
 from videocompressor.core.manifest import LEASE_TTL_SECONDS, Manifest
-from videocompressor.core.models import ClipRecord, Fingerprint, JobState
+from videocompressor.core.models import (
+    ArchiveRoot,
+    ClipRecord,
+    Destination,
+    DestinationKind,
+    Fingerprint,
+    JobState,
+)
 
 TOKEN = "sqlite-token"
 CLIP = "2024-06-Ride/GS010001.MP4"
@@ -143,3 +151,80 @@ def test_open_manifest_prefers_the_sqlite_manifest(tmp_path, clock, monkeypatch)
         assert claimed is not None and claimed.state is JobState.CLAIMED
     finally:
         manifest.close()
+
+
+def test_enqueue_survives_a_controller_restart(tmp_path, clock, monkeypatch):
+    monkeypatch.setattr(manifest_module, "_utcnow", clock)
+    archive = tmp_path / "archive"
+    output = tmp_path / "output"
+    archive.mkdir()
+    output.mkdir()
+    (archive / CLIP).parent.mkdir(parents=True)
+    (archive / CLIP).write_bytes(b"clip")
+    roots = [
+        ArchiveRoot(id="archive", name="Archive", path=archive),
+        ArchiveRoot(id="compressed", name="Output", path=output),
+    ]
+    manifest_path = tmp_path / "manifest.sqlite"
+    store_path = tmp_path / "controller.sqlite"
+
+    manifest = Manifest.open(manifest_path)
+    controller = ControllerServer(
+        store=ControllerStore.open(store_path, clock=clock),
+        manifest=manifest,
+        token=TOKEN,
+        port=0,
+        clock=clock,
+        roots=lambda: roots,
+        sweep_interval_seconds=3600,
+    )
+    controller.start_background()
+    try:
+        api = ApiClient(controller, token=TOKEN)
+        status, body = api.post(
+            "/jobs",
+            {
+                "files": [{"root_id": "archive", "relative_path": CLIP}],
+                "destination": {
+                    "kind": "output_root",
+                    "root_id": "compressed",
+                    "relative_path": "2026-10",
+                },
+                "delete_original": True,
+            },
+        )
+        assert status == 200 and body["queued"] == 1
+    finally:
+        controller.stop()  # closes the controller store
+    manifest.close()
+
+    reopened = Manifest.open(manifest_path)
+    try:
+        record = reopened.get_clip("archive", CLIP)
+        assert record is not None and record.state is JobState.QUEUED
+        assert record.destination == Destination(
+            DestinationKind.OUTPUT_ROOT, "compressed", "2026-10"
+        )
+        assert record.delete_original is True
+
+        controller = ControllerServer(
+            store=ControllerStore.open(store_path, clock=clock),
+            manifest=reopened,
+            token=TOKEN,
+            port=0,
+            clock=clock,
+            roots=lambda: roots,
+            sweep_interval_seconds=3600,
+        )
+        controller.start_background()
+        try:
+            api = ApiClient(controller, token=TOKEN)
+            api.register("node-a")
+            status, claimed = api.post("/jobs/claim", {"worker_id": "node-a"})
+            assert status == 200
+            assert claimed["job"]["destination"]["root_id"] == "compressed"
+            assert claimed["job"]["delete_original"] is True
+        finally:
+            controller.stop()
+    finally:
+        reopened.close()

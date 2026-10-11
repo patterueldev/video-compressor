@@ -9,7 +9,6 @@ controller's run-log endpoint.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -18,12 +17,19 @@ from pathlib import Path
 from typing import Self
 from urllib.parse import quote
 
+from videocompressor.core.manifest_schema import (
+    SCHEMA,
+    capture_to_json,
+    destination_to_json,
+    from_iso,
+    migrate,
+    row_to_record,
+    to_iso,
+)
 from videocompressor.core.models import (
-    CaptureIssue,
-    CaptureTime,
-    CaptureTimeMode,
     Classification,
     ClipRecord,
+    Destination,
     Fingerprint,
     JobState,
     RunEvent,
@@ -52,44 +58,12 @@ RETRY_STATES = frozenset({JobState.CLAIMED, JobState.COPIED, JobState.ENCODING})
 #: must reconcile the source before the clip can run again.
 REPLACEMENT_STATES = frozenset({JobState.VALIDATED, JobState.TRANSFERRING, JobState.REPLACING})
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS clips (
-    root_id           TEXT NOT NULL,
-    relative_path     TEXT NOT NULL,
-    state             TEXT NOT NULL,
-    classification    TEXT NOT NULL,
-    source_size_bytes INTEGER NOT NULL,
-    source_mtime_ns   INTEGER NOT NULL,
-    source_digest     TEXT NOT NULL,
-    output_size_bytes INTEGER,
-    output_mtime_ns   INTEGER,
-    output_digest     TEXT,
-    capture_time_json TEXT,
-    template_id       TEXT,
-    settings_hash     TEXT,
-    worker_id         TEXT,
-    lease_expires_at  TEXT,
-    error             TEXT,
-    created_at        TEXT NOT NULL,
-    updated_at        TEXT NOT NULL,
-    completed_at      TEXT,
-    PRIMARY KEY (root_id, relative_path)
-);
-
-CREATE TABLE IF NOT EXISTS events (
-    seq           INTEGER PRIMARY KEY AUTOINCREMENT,
-    at            TEXT NOT NULL,
-    level         TEXT NOT NULL,
-    message       TEXT NOT NULL,
-    root_id       TEXT,
-    relative_path TEXT
-);
-"""
-
 _ALLOWED_CHANGES = frozenset(
     {
         "classification",
         "capture_time",
+        "destination",
+        "delete_original",
         "template_id",
         "settings_hash",
         "worker_id",
@@ -108,81 +82,6 @@ class LeaseError(RuntimeError):
 def _utcnow() -> datetime:
     """Current time; patched by tests to drive lease and recovery behavior."""
     return datetime.now(UTC)
-
-
-def _to_iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.isoformat()
-
-
-def _from_iso(value: str | None) -> datetime | None:
-    if value is None:
-        return None
-    return datetime.fromisoformat(value)
-
-
-def _capture_to_json(capture: CaptureTime | None) -> str | None:
-    if capture is None:
-        return None
-    payload = {
-        "when": _to_iso(capture.when),
-        "raw": capture.raw,
-        "source": capture.source,
-        "mode": str(capture.mode),
-        "issue": str(capture.issue) if capture.issue is not None else None,
-    }
-    return json.dumps(payload, sort_keys=True)
-
-
-def _capture_from_json(payload: str | None) -> CaptureTime | None:
-    if payload is None:
-        return None
-    data = json.loads(payload)
-    issue = data.get("issue")
-    return CaptureTime(
-        when=_from_iso(data.get("when")),
-        raw=data.get("raw"),
-        source=data.get("source"),
-        mode=CaptureTimeMode(data.get("mode", CaptureTimeMode.LOCAL_WALL_CLOCK)),
-        issue=CaptureIssue(issue) if issue is not None else None,
-    )
-
-
-def _fingerprint_from_row(row: sqlite3.Row, prefix: str) -> Fingerprint | None:
-    size = row[f"{prefix}_size_bytes"]
-    if size is None:
-        return None
-    return Fingerprint(
-        size_bytes=size,
-        mtime_ns=row[f"{prefix}_mtime_ns"],
-        digest=row[f"{prefix}_digest"],
-    )
-
-
-def _row_to_record(row: sqlite3.Row) -> ClipRecord:
-    return ClipRecord(
-        root_id=row["root_id"],
-        relative_path=row["relative_path"],
-        source=Fingerprint(
-            size_bytes=row["source_size_bytes"],
-            mtime_ns=row["source_mtime_ns"],
-            digest=row["source_digest"],
-        ),
-        state=JobState(row["state"]),
-        classification=Classification(row["classification"]),
-        capture_time=_capture_from_json(row["capture_time_json"]),
-        template_id=row["template_id"],
-        settings_hash=row["settings_hash"],
-        worker_id=row["worker_id"],
-        output=_fingerprint_from_row(row, "output"),
-        error=row["error"],
-        created_at=_from_iso(row["created_at"]),
-        updated_at=_from_iso(row["updated_at"]),
-        completed_at=_from_iso(row["completed_at"]),
-    )
 
 
 class Manifest:
@@ -210,7 +109,8 @@ class Manifest:
         if create:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA busy_timeout=5000")
-            connection.executescript(_SCHEMA)
+            connection.executescript(SCHEMA)
+            migrate(connection)
         return cls(connection)
 
     def close(self) -> None:
@@ -246,9 +146,10 @@ class Manifest:
                 root_id, relative_path, state, classification,
                 source_size_bytes, source_mtime_ns, source_digest,
                 output_size_bytes, output_mtime_ns, output_digest,
-                capture_time_json, template_id, settings_hash, worker_id, error,
+                capture_time_json, destination_json, delete_original,
+                template_id, settings_hash, worker_id, error,
                 created_at, updated_at, completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(root_id, relative_path) DO UPDATE SET
                 state = excluded.state,
                 classification = excluded.classification,
@@ -259,6 +160,8 @@ class Manifest:
                 output_mtime_ns = excluded.output_mtime_ns,
                 output_digest = excluded.output_digest,
                 capture_time_json = excluded.capture_time_json,
+                destination_json = excluded.destination_json,
+                delete_original = excluded.delete_original,
                 template_id = excluded.template_id,
                 settings_hash = excluded.settings_hash,
                 worker_id = excluded.worker_id,
@@ -277,14 +180,16 @@ class Manifest:
                 output.size_bytes if output is not None else None,
                 output.mtime_ns if output is not None else None,
                 output.digest if output is not None else None,
-                _capture_to_json(record.capture_time),
+                capture_to_json(record.capture_time),
+                destination_to_json(record.destination),
+                int(record.delete_original),
                 record.template_id,
                 record.settings_hash,
                 record.worker_id,
                 record.error,
-                _to_iso(record.created_at) or _to_iso(now),
-                _to_iso(record.updated_at) or _to_iso(now),
-                _to_iso(record.completed_at),
+                to_iso(record.created_at) or to_iso(now),
+                to_iso(record.updated_at) or to_iso(now),
+                to_iso(record.completed_at),
             ),
         )
 
@@ -294,7 +199,7 @@ class Manifest:
             "SELECT * FROM clips WHERE root_id = ? AND relative_path = ?",
             (root_id, relative_path),
         ).fetchone()
-        return _row_to_record(row) if row is not None else None
+        return row_to_record(row) if row is not None else None
 
     def list_clips(self, *, state: JobState | None = None) -> list[ClipRecord]:
         """List clip records, optionally filtered by state."""
@@ -307,7 +212,7 @@ class Manifest:
                 "SELECT * FROM clips WHERE state = ? ORDER BY created_at, relative_path",
                 (str(state),),
             ).fetchall()
-        return [_row_to_record(row) for row in rows]
+        return [row_to_record(row) for row in rows]
 
     def claim_next(self, worker_id: str) -> ClipRecord | None:
         """Transactionally claim the next queued clip for ``worker_id``.
@@ -330,8 +235,8 @@ class Manifest:
                     (
                         str(JobState.CLAIMED),
                         worker_id,
-                        _to_iso(now + timedelta(seconds=LEASE_TTL_SECONDS)),
-                        _to_iso(now),
+                        to_iso(now + timedelta(seconds=LEASE_TTL_SECONDS)),
+                        to_iso(now),
                         row["root_id"],
                         row["relative_path"],
                         str(JobState.QUEUED),
@@ -356,8 +261,8 @@ class Manifest:
             "WHERE root_id = ? AND relative_path = ? AND worker_id = ? "
             f"AND state IN ({placeholders})",
             (
-                _to_iso(now + timedelta(seconds=LEASE_TTL_SECONDS)),
-                _to_iso(now),
+                to_iso(now + timedelta(seconds=LEASE_TTL_SECONDS)),
+                to_iso(now),
                 root_id,
                 relative_path,
                 worker_id,
@@ -389,12 +294,14 @@ class Manifest:
         ).fetchone()
         if row is None:
             raise KeyError(f"no manifest record for {root_id}:{relative_path}")
-        record = _row_to_record(row)
+        record = row_to_record(row)
         now = _utcnow()
 
         values: dict[str, object] = {
             "classification": record.classification,
             "capture_time": record.capture_time,
+            "destination": record.destination,
+            "delete_original": record.delete_original,
             "template_id": record.template_id,
             "settings_hash": record.settings_hash,
             "worker_id": record.worker_id,
@@ -415,19 +322,25 @@ class Manifest:
         if state in LEASE_STATES:
             lease_expires_at = row["lease_expires_at"]
             if lease_expires_at is None and state is JobState.CLAIMED:
-                lease_expires_at = _to_iso(now + timedelta(seconds=LEASE_TTL_SECONDS))
+                lease_expires_at = to_iso(now + timedelta(seconds=LEASE_TTL_SECONDS))
         else:
             lease_expires_at = None
 
         output = values["output"]
         if output is not None and not isinstance(output, Fingerprint):
             raise ValueError("output must be a Fingerprint")
+        destination = values["destination"]
+        if destination is not None and not isinstance(destination, Destination):
+            raise ValueError("destination must be a Destination")
+        if not isinstance(values["delete_original"], bool):
+            raise ValueError("delete_original must be a bool")
         self._connection.execute(
             """
             UPDATE clips SET
                 state = ?, classification = ?, source_size_bytes = ?, source_mtime_ns = ?,
                 source_digest = ?, output_size_bytes = ?, output_mtime_ns = ?,
-                output_digest = ?, capture_time_json = ?, template_id = ?, settings_hash = ?,
+                output_digest = ?, capture_time_json = ?, destination_json = ?,
+                delete_original = ?, template_id = ?, settings_hash = ?,
                 worker_id = ?, lease_expires_at = ?, error = ?, updated_at = ?,
                 completed_at = ?
             WHERE root_id = ? AND relative_path = ?
@@ -441,14 +354,16 @@ class Manifest:
                 output.size_bytes if output is not None else None,
                 output.mtime_ns if output is not None else None,
                 output.digest if output is not None else None,
-                _capture_to_json(values["capture_time"]),
+                capture_to_json(values["capture_time"]),
+                destination_to_json(destination),
+                int(values["delete_original"]),
                 values["template_id"],
                 values["settings_hash"],
                 values["worker_id"],
                 lease_expires_at,
                 values["error"],
-                _to_iso(now),
-                _to_iso(values["completed_at"]),
+                to_iso(now),
+                to_iso(values["completed_at"]),
                 root_id,
                 relative_path,
             ),
@@ -471,7 +386,7 @@ class Manifest:
             ).fetchall()
             for row in rows:
                 state = JobState(row["state"])
-                expires = _from_iso(row["lease_expires_at"])
+                expires = from_iso(row["lease_expires_at"])
                 if state not in LEASE_STATES or expires is None or expires >= now:
                     continue
                 key = (row["root_id"], row["relative_path"])
@@ -482,7 +397,7 @@ class Manifest:
                         (
                             str(JobState.QUEUED),
                             "requeued after lease expiry; incomplete local encode will restart",
-                            _to_iso(now),
+                            to_iso(now),
                             *key,
                         ),
                     )
@@ -494,7 +409,7 @@ class Manifest:
                             str(JobState.REVIEW),
                             "lease expired during replacement; "
                             "reconcile the source before retrying",
-                            _to_iso(now),
+                            to_iso(now),
                             *key,
                         ),
                     )
@@ -519,7 +434,7 @@ class Manifest:
         cursor = self._connection.execute(
             "INSERT INTO events (at, level, message, root_id, relative_path) "
             "VALUES (?, ?, ?, ?, ?)",
-            (_to_iso(at), level, message, root_id, relative_path),
+            (to_iso(at), level, message, root_id, relative_path),
         )
         seq = cursor.lastrowid
         assert seq is not None
@@ -546,7 +461,7 @@ class Manifest:
             ).fetchall()
         events = []
         for row in rows:
-            at = _from_iso(row["at"])
+            at = from_iso(row["at"])
             assert at is not None
             events.append(
                 RunEvent(
