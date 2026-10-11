@@ -91,6 +91,10 @@ class MonitorPanel(QWidget):
         """Update the controller-mode label."""
         self.description_label.setText(text)
 
+    def refresh_now(self) -> None:
+        """Force an immediate poll (the Refresh button and the convert flow's Start)."""
+        self.runner.refresh_now()
+
     def apply_snapshot(self, snapshot: MonitorSnapshot) -> None:
         """Render one controller poll."""
         if self._closed:
