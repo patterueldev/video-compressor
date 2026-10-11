@@ -1,8 +1,9 @@
-"""Typed HTTP client for controller contract v1 behind the GUI monitor (issue #9).
+"""Typed HTTP client for controller contract v1 behind the GUI (issues #9 and #41).
 
 The monitor polls the same endpoints workers use (``GET /workers``, ``GET
-/events``, ``GET /summary``, ``POST .../stop|resume``), whether the GUI hosts
-the controller in-process or attaches to one that is already running. Pure
+/events``, ``GET /summary``, ``POST .../stop|resume``), and the convert flow
+enqueues explicit files through ``POST /jobs``, whether the GUI hosts the
+controller in-process or attaches to one that is already running. Pure
 Python: no PySide6, so the client runs in CI without the optional ``gui`` extra.
 """
 
@@ -27,7 +28,7 @@ class MonitorUnavailable(RuntimeError):
 
 
 class HttpControllerClient:
-    """Minimal typed client for the monitor endpoints of controller contract v1."""
+    """Minimal typed client for the monitor and convert endpoints of contract v1."""
 
     def __init__(self, base_url: str, token: str | None, *, timeout: float = 2.0) -> None:
         self.base_url = base_url.rstrip("/")
@@ -53,6 +54,10 @@ class HttpControllerClient:
         """``GET /summary``: live counts, or a finished run's counts."""
         query = {"run_id": run_id} if run_id is not None else {}
         return self._request("GET", _with_query("/summary", query)) or {}
+
+    def enqueue(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """``POST /jobs``: enqueue explicit files for direct conversions (issue #39)."""
+        return self._request("POST", "/jobs", payload) or {}
 
     def stop_worker(self, worker_id: str) -> None:
         """``POST /workers/{id}/stop``: ask the worker to terminate its active job."""

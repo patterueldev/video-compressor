@@ -44,7 +44,9 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
 - `gui`: `app`, `main_window`, `drop_zone`, `roots_panel`, `templates_panel`, `clip_tables`, and
   `scan_runner` widgets plus the pure Python `state` and `scan_service` (issue #8) and the job
   monitor (`monitor_app`, `monitor_window`, `monitor_panel`, `monitor_tables`, `monitor_runner`,
-  `monitor_service`, `monitor_client`, `controller_session`; issue #9).
+  `monitor_service`, `monitor_client`, `controller_session`; issue #9) and the convert flow
+  (`convert_panel`, `convert_destination`, `convert_drop` widgets plus the pure Python
+  `convert_service`; issue #41).
 - `worker`: `agent` (register/heartbeat/claim loop and stop), `client` (controller HTTP v1),
   `outcome` (per-job result type), `pipeline` (per-job copy → encode → validate → replace),
   `destination` (destination decode/resolve/place/delete), `transfer` (pilot delivery and

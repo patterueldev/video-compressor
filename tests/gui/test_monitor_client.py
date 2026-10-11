@@ -8,7 +8,8 @@ import pytest
 
 from fixtures.controller import TOKEN
 from videocompressor.controller.protocol import ControllerError
-from videocompressor.core.models import JobState
+from videocompressor.controller.server import ControllerServer
+from videocompressor.core.models import ArchiveRoot, JobState
 from videocompressor.gui.monitor_client import (
     HttpControllerClient,
     MonitorUnavailable,
@@ -62,6 +63,56 @@ def test_stop_and_resume_round_trip(server, api, seed_clip):
 
     client.resume_worker("a")
     assert client.workers()["workers"][0]["stop_requested"] is False
+
+
+def test_enqueue_round_trip(tmp_path, store, manifest, clock):
+    archive = tmp_path / "archive"
+    output = tmp_path / "output"
+    archive.mkdir()
+    output.mkdir()
+    (archive / "clip.MP4").write_bytes(b"clip")
+    roots = [
+        ArchiveRoot(id="archive", name="Archive", path=archive),
+        ArchiveRoot(id="compressed", name="Output", path=output),
+    ]
+    controller = ControllerServer(
+        store=store,
+        manifest=manifest,
+        token=TOKEN,
+        port=0,
+        clock=clock,
+        roots=lambda: roots,
+        sweep_interval_seconds=3600,
+    )
+    controller.start_background()
+    try:
+        client = HttpControllerClient(controller.base_url, TOKEN)
+        payload = {
+            "files": [{"root_id": "archive", "relative_path": "clip.MP4"}],
+            "destination": {
+                "kind": "output_root",
+                "root_id": "compressed",
+                "relative_path": "2026-10",
+            },
+            "template_id": "motorcycle",
+            "delete_original": False,
+        }
+
+        body = client.enqueue(payload)
+
+        assert (body["queued"], body["skipped"], body["rejected"]) == (1, 0, 0)
+        assert body["jobs"][0]["status"] == "queued"
+
+        again = client.enqueue(payload)
+        assert again["skipped"] == 1
+        assert again["jobs"][0]["reason"] == "already_queued"
+
+        refused = {**payload, "destination": {"kind": "same_folder"}, "delete_original": False}
+        with pytest.raises(ControllerError) as excinfo:
+            client.enqueue(refused)
+        assert (excinfo.value.status, excinfo.value.code) == (400, "bad_request")
+    finally:
+        controller.stop()
 
 
 def test_unknown_worker_and_auth_errors_map_to_controller_error(server):

@@ -199,6 +199,14 @@ class FakeMonitorClient:
         self.event_calls: list[int | None] = []
         self.stops: list[str] = []
         self.resumes: list[str] = []
+        self.enqueues: list[dict[str, Any]] = []
+        self.enqueue_response: dict[str, Any] = {
+            "jobs": [],
+            "queued": 0,
+            "skipped": 0,
+            "rejected": 0,
+        }
+        self.enqueue_error: Exception | None = None
 
     def workers(self) -> dict[str, Any]:
         return self._workers
@@ -211,6 +219,12 @@ class FakeMonitorClient:
 
     def summary(self, *, run_id: str | None = None) -> dict[str, Any]:
         return self._summary
+
+    def enqueue(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.enqueues.append(payload)
+        if self.enqueue_error is not None:
+            raise self.enqueue_error
+        return self.enqueue_response
 
     def stop_worker(self, worker_id: str) -> None:
         self.stops.append(worker_id)

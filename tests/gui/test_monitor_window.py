@@ -10,6 +10,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QWidget
 
@@ -51,12 +52,29 @@ class FakePanel(QWidget):
         super().__init__()
         self.active = active
         self.shutdowns = 0
+        self.refreshes = 0
 
     def has_active_jobs(self) -> bool:
         return self.active
 
+    def refresh_now(self) -> None:
+        self.refreshes += 1
+
     def shutdown(self) -> None:
         self.shutdowns += 1
+
+
+class FakeConvertPanel(QWidget):
+    """Stand-in for ``ConvertPanel`` in the window tests."""
+
+    enqueued = Signal(int)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.refreshes = 0
+
+    def refresh(self) -> None:
+        self.refreshes += 1
 
 
 def _spin_until(qapp, predicate: Callable[[], bool], timeout_s: float = 5.0) -> bool:
@@ -72,6 +90,7 @@ def _spin_until(qapp, predicate: Callable[[], bool], timeout_s: float = 5.0) -> 
 def _build(tmp_path: Path, *, hosted: bool = True, panel_active: bool = False, busy: bool = False):
     session = FakeControllerSession(hosted=hosted)
     panel = FakePanel(panel_active)
+    convert = FakeConvertPanel()
     library_runner = FakeScanRunner()
     library_runner.busy = busy
     window = monitor_window.MonitorWindow(
@@ -81,6 +100,7 @@ def _build(tmp_path: Path, *, hosted: bool = True, panel_active: bool = False, b
         session=session,  # type: ignore[arg-type]
         library=make_library(tmp_path, AppConfig(), library_runner),
         panel=panel,  # type: ignore[arg-type]
+        convert=convert,  # type: ignore[arg-type]
     )
     return window, session, panel, library_runner
 
@@ -95,14 +115,39 @@ def _window_with_default_panel(tmp_path: Path, session: object) -> monitor_windo
     )
 
 
-def test_window_shows_library_and_monitor_tabs(qapp, tmp_path):
+def test_window_shows_convert_library_and_monitor_tabs(qapp, tmp_path):
     window, _session, _panel, _runner = _build(tmp_path)
     try:
-        assert window.tabs.count() == 2
-        assert window.tabs.tabText(0) == "Library"
-        assert window.tabs.tabText(1) == "Monitor"
-        assert window.tabs.widget(0) is window.library
-        assert window.tabs.widget(1) is window.monitor
+        assert window.tabs.count() == 3
+        assert window.tabs.tabText(0) == "Convert"
+        assert window.tabs.tabText(1) == "Library"
+        assert window.tabs.tabText(2) == "Monitor"
+        assert window.tabs.widget(0) is window.convert
+        assert window.tabs.widget(1) is window.library
+        assert window.tabs.widget(2) is window.monitor
+        assert window.tabs.currentWidget() is window.convert
+    finally:
+        dispose(window)
+
+
+def test_enqueue_switches_to_the_monitor_and_refreshes(qapp, tmp_path):
+    window, _session, panel, _runner = _build(tmp_path)
+    try:
+        window.convert.enqueued.emit(2)
+
+        assert window.tabs.currentWidget() is window.monitor
+        assert panel.refreshes == 1
+    finally:
+        dispose(window)
+
+
+def test_switching_to_the_convert_tab_refreshes_it(qapp, tmp_path):
+    window, _session, _panel, _runner = _build(tmp_path)
+    try:
+        window.tabs.setCurrentWidget(window.library)
+        window.tabs.setCurrentWidget(window.convert)
+
+        assert window.convert.refreshes == 1
     finally:
         dispose(window)
 
