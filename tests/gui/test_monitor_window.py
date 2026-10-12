@@ -20,10 +20,12 @@ from gui.monitor_support import (
     worker_payload,
     workers_payload,
 )
-from gui.monitor_support_qt import FakeScanRunner, dispose, make_library
+from gui.monitor_support_qt import FakeMonitorRunner, FakeScanRunner, dispose, make_library
 from videocompressor.core.config import AppConfig
 from videocompressor.gui import monitor_window
 from videocompressor.gui.controller_session import start_controller_session
+from videocompressor.gui.local_worker import STATE_STOPPED, LocalWorkerOutcome
+from videocompressor.gui.local_worker_panel import LocalWorkerPanel
 from videocompressor.gui.monitor_service import MonitorSession
 
 
@@ -285,4 +287,118 @@ def test_window_builds_the_panel_from_the_controller_session_client(qapp, tmp_pa
         window.monitor.shutdown()
         window.nodes.shutdown()
         _spin_until(qapp, lambda: not window.nodes.runner.busy)
+        dispose(window)
+
+
+class FakePanelWithRunner(FakePanel):
+    """A panel double that also exposes the monitor runner signal."""
+
+    def __init__(self, active: bool = False) -> None:
+        super().__init__(active)
+        self.runner = FakeMonitorRunner()
+
+
+class FakeLocalWorker(QWidget):
+    """Stand-in for ``LocalWorkerPanel`` in the window tests."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.snapshots: list[object] = []
+        self.roots_changes = 0
+
+    def apply_snapshot(self, snapshot: object) -> None:
+        self.snapshots.append(snapshot)
+
+    def on_roots_changed(self) -> None:
+        self.roots_changes += 1
+
+
+class FakeSupervisor:
+    """Records window close ordering for the local worker."""
+
+    def __init__(self, order: list[str] | None = None) -> None:
+        self.order = order if order is not None else []
+        self.shutdowns = 0
+
+    def shutdown(self) -> None:
+        self.shutdowns += 1
+        self.order.append("supervisor")
+
+    def status(self, *, online: bool | None = None) -> LocalWorkerOutcome:
+        del online
+        return LocalWorkerOutcome(STATE_STOPPED, "stopped")
+
+
+def _window_with_local_worker(tmp_path, panel, local_worker, supervisor):
+    return monitor_window.MonitorWindow(
+        config=AppConfig(),
+        config_path=tmp_path / "config.toml",
+        manifest_path=tmp_path / "manifest.sqlite",
+        session=FakeControllerSession(),
+        library=make_library(tmp_path, AppConfig(), FakeScanRunner()),
+        panel=panel,
+        convert=FakeConvertPanel(),
+        nodes=FakeNodesPanel(),  # type: ignore[arg-type]
+        supervisor=supervisor,
+        local_worker=local_worker,
+    )
+
+
+def test_local_worker_follows_the_monitor_and_root_signals(qapp, tmp_path):
+    panel = FakePanelWithRunner()
+    local_worker = FakeLocalWorker()
+    window = _window_with_local_worker(tmp_path, panel, local_worker, FakeSupervisor())
+    try:
+        snapshot = object()
+        panel.runner.emit_updated(snapshot)
+        assert local_worker.snapshots == [snapshot]
+
+        window.library.roots_panel.roots_changed.emit()
+        assert local_worker.roots_changes == 1
+    finally:
+        dispose(window)
+
+
+def test_window_builds_the_local_worker_panel_from_the_supervisor(qapp, tmp_path):
+    supervisor = FakeSupervisor()
+    window = _window_with_local_worker(tmp_path, FakePanelWithRunner(), None, supervisor)
+    try:
+        assert isinstance(window.local_worker, LocalWorkerPanel)
+        assert window.local_worker.supervisor is supervisor
+    finally:
+        dispose(window)
+
+
+def test_close_shuts_down_the_local_worker_before_the_session(qapp, tmp_path):
+    order: list[str] = []
+
+    class OrderedPanel(FakePanelWithRunner):
+        def shutdown(self) -> None:
+            order.append("monitor")
+            super().shutdown()
+
+    panel = OrderedPanel()
+    session = FakeControllerSession()
+    supervisor = FakeSupervisor(order)
+    window = monitor_window.MonitorWindow(
+        config=AppConfig(),
+        config_path=tmp_path / "config.toml",
+        manifest_path=tmp_path / "manifest.sqlite",
+        session=session,
+        library=make_library(tmp_path, AppConfig(), FakeScanRunner()),
+        panel=panel,
+        convert=FakeConvertPanel(),
+        nodes=FakeNodesPanel(),  # type: ignore[arg-type]
+        supervisor=supervisor,
+        local_worker=FakeLocalWorker(),
+    )
+    try:
+        event = QCloseEvent()
+        window.closeEvent(event)
+
+        assert event.isAccepted()
+        assert order == ["monitor", "supervisor"]
+        assert supervisor.shutdowns == 1
+        assert session.closed == 1
+    finally:
         dispose(window)

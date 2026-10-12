@@ -13,7 +13,8 @@ save emits the new shape only.
 
 The GUI adds registered archive roots (issue #8) plus template create/duplicate/rename
 helpers; every helper validates its input before the caller writes the file. The Nodes
-tab (issue #54) adds ``[[nodes]]`` entries via ``core.nodes``.
+tab (issue #54) adds ``[[nodes]]`` entries via ``core.nodes``, and the ``[local_worker]``
+section (issue #52) is the app-managed local worker's setting.
 """
 
 from __future__ import annotations
@@ -42,6 +43,10 @@ DEFAULT_TEMPLATE_NAME = "motorcycle"
 
 #: Registered archive-root ids double as manifest keys and job payload ids.
 ROOT_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
+#: App-managed local worker defaults (issue #52): node id and FFmpeg thread cap.
+LOCAL_WORKER_ID = "local"
+DEFAULT_LOCAL_THREAD_CAP = 2
 
 CONFIG_FILENAME = "config.toml"
 
@@ -78,6 +83,17 @@ class ControllerSettings:
 
 
 @dataclass
+class LocalWorkerSettings:
+    """App-managed local worker setting (issue #52): runs by default."""
+
+    enabled: bool = True
+    worker_id: str = LOCAL_WORKER_ID
+    keep_running: bool = False
+    scratch_dir: Path | None = None
+    thread_cap: int = DEFAULT_LOCAL_THREAD_CAP
+
+
+@dataclass
 class AppConfig:
     """The per-user configuration document."""
 
@@ -88,6 +104,7 @@ class AppConfig:
     roots: list[ArchiveRoot] = field(default_factory=list)
     nodes: list[NodeEntry] = field(default_factory=list)
     controller: ControllerSettings = field(default_factory=ControllerSettings)
+    local_worker: LocalWorkerSettings = field(default_factory=LocalWorkerSettings)
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -141,6 +158,25 @@ def validate_template(settings: TemplateSettings) -> list[str]:
         ZoneInfo(settings.timezone)
     except (ZoneInfoNotFoundError, ValueError):
         problems.append(f"unknown timezone {settings.timezone!r}")
+    return problems
+
+
+def validate_local_worker(
+    settings: LocalWorkerSettings, roots: Sequence[ArchiveRoot] = ()
+) -> list[str]:
+    """Return human-readable problems with ``settings`` (empty when valid)."""
+    problems: list[str] = []
+    if not ROOT_ID_PATTERN.fullmatch(settings.worker_id):
+        problems.append("local worker id must be 1-64 letters, digits, dot, underscore or dash")
+    if settings.thread_cap < 1:
+        problems.append("thread cap must be a positive integer")
+    scratch = settings.scratch_dir
+    if scratch is not None:
+        resolved = scratch.expanduser()
+        if not resolved.is_absolute():
+            problems.append("scratch dir must be an absolute path")
+        elif root_for_folder(roots, resolved) is not None:
+            problems.append("scratch dir must not be inside a registered root")
     return problems
 
 
@@ -228,6 +264,15 @@ def _config_to_toml(config: AppConfig) -> dict[str, object]:
     if config.nodes:
         document["nodes"] = nodes_to_toml(config.nodes)
     document["controller"] = controller
+    local_worker: dict[str, object] = {
+        "enabled": config.local_worker.enabled,
+        "id": config.local_worker.worker_id,
+        "keep_running": config.local_worker.keep_running,
+        "thread_cap": config.local_worker.thread_cap,
+    }
+    if config.local_worker.scratch_dir is not None:
+        local_worker["scratch_dir"] = str(config.local_worker.scratch_dir)
+    document["local_worker"] = local_worker
     return document
 
 
@@ -281,6 +326,25 @@ def _config_from_toml(data: Mapping[str, object]) -> AppConfig:
         config.controller.port = int(controller.get("port", config.controller.port))
         token = controller.get("token")
         config.controller.token = str(token) if token is not None else None
+
+    local_worker = data.get("local_worker")
+    if isinstance(local_worker, Mapping):
+        settings = config.local_worker
+        enabled = local_worker.get("enabled")
+        if isinstance(enabled, bool):
+            settings.enabled = enabled
+        worker_id = local_worker.get("id")
+        if isinstance(worker_id, str) and worker_id:
+            settings.worker_id = worker_id
+        keep_running = local_worker.get("keep_running")
+        if isinstance(keep_running, bool):
+            settings.keep_running = keep_running
+        thread_cap = local_worker.get("thread_cap")
+        if isinstance(thread_cap, int) and not isinstance(thread_cap, bool):
+            settings.thread_cap = thread_cap
+        scratch_dir = local_worker.get("scratch_dir")
+        if isinstance(scratch_dir, str) and scratch_dir:
+            settings.scratch_dir = Path(scratch_dir).expanduser()
 
     return config
 

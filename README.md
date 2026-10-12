@@ -71,6 +71,10 @@ Workers pull jobs from the controller over the local network and resolve each cl
 destination output root — through their own root mapping, so the same archive-relative path works
 on the Mac and on another machine. Each node runs at most one FFmpeg conversion at a time.
 
+The app runs a local worker by default (setting: `[local_worker]` in the per-user config), so a
+fresh install converts without starting a worker by hand; its node appears in the Monitor, where
+it can be stopped or switched to a keep-running service.
+
 - [docs/worker-runbook.md](docs/worker-runbook.md) — native node configuration, start/stop,
   resume and recovery semantics, troubleshooting.
 - [deploy/homeserver/README.md](deploy/homeserver/README.md) — the container-based homeserver

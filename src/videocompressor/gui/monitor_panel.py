@@ -48,11 +48,13 @@ class MonitorPanel(QWidget):
         *,
         runner: MonitorRunner | None = None,
         description: str = "",
+        header: QWidget | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.session = session
         self._snapshot: MonitorSnapshot | None = None
+        self._header = header
         self._closed = False
 
         self.description_label = QLabel(description or "controller monitor")
@@ -193,6 +195,8 @@ class MonitorPanel(QWidget):
         body.setStretchFactor(1, 2)
 
         layout = QVBoxLayout(self)
+        if self._header is not None:
+            layout.addWidget(self._header)
         layout.addLayout(header)
         layout.addLayout(summary)
         layout.addWidget(body, 1)
