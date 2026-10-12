@@ -34,7 +34,13 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
-__all__ = ["MappingError", "WorkerConfig", "WorkerConfigError", "load_worker_config"]
+__all__ = [
+    "MappingError",
+    "WorkerConfig",
+    "WorkerConfigError",
+    "load_worker_config",
+    "read_worker_id",
+]
 
 #: Worker ids match this pattern in the controller contract (docs/architecture.md).
 WORKER_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
@@ -65,6 +71,9 @@ class WorkerConfig:
     poll_seconds: float = DEFAULT_POLL_SECONDS
     pilot_root: Path | None = None
     heartbeat_seconds: float | None = None
+    #: Name of the environment variable the token came from, when the config used
+    #: ``token_env``; the service renderer materializes it for the unit (#51).
+    token_env: str | None = None
 
     @property
     def pilot(self) -> bool:
@@ -94,16 +103,33 @@ class WorkerConfig:
 
 def load_worker_config(path: Path) -> WorkerConfig:
     """Load and validate the per-node worker config at ``path``."""
+    return _config_from_toml(_read_toml(path), path)
+
+
+def read_worker_id(path: Path) -> str:
+    """Read only the worker id from the config at ``path``.
+
+    The service commands (issue #51) use this lighter read so a node whose roots
+    are unmounted or whose token environment is gone can still be inspected and
+    removed.
+    """
+    data = _read_toml(path)
+    worker = data.get("worker")
+    if not isinstance(worker, Mapping):
+        raise WorkerConfigError(f"worker config {path} has no [worker] section")
+    return _worker_id(worker)
+
+
+def _read_toml(path: Path) -> Mapping[str, Any]:
     if not path.is_file():
         raise WorkerConfigError(f"worker config {path} does not exist")
     try:
         with path.open("rb") as handle:
-            data = tomllib.load(handle)
+            return tomllib.load(handle)
     except tomllib.TOMLDecodeError as exc:
         raise WorkerConfigError(f"worker config {path} is not valid TOML: {exc}") from exc
     except OSError as exc:
         raise WorkerConfigError(f"cannot read worker config {path}: {exc}") from exc
-    return _config_from_toml(data, path)
 
 
 def _config_from_toml(data: Mapping[str, Any], path: Path) -> WorkerConfig:
@@ -111,13 +137,10 @@ def _config_from_toml(data: Mapping[str, Any], path: Path) -> WorkerConfig:
     if not isinstance(worker, Mapping):
         raise WorkerConfigError(f"worker config {path} has no [worker] section")
 
-    worker_id = _require_str(worker, "id")
-    if not WORKER_ID_PATTERN.fullmatch(worker_id):
-        raise WorkerConfigError(
-            f"worker id {worker_id!r} must match [A-Za-z0-9_.-]{{1,64}}"
-        )
+    worker_id = _worker_id(worker)
     controller_url = _controller_url(_require_str(worker, "controller_url"))
-    token = _token(worker)
+    token_env = _optional_str(worker, "token_env")
+    token = _token(worker, token_env)
     roots = _roots(data.get("roots"))
     scratch_dir = _ensure_dir(_path(worker, "scratch_dir"), "scratch_dir")
     thread_cap = _optional_int(worker, "thread_cap", default=DEFAULT_THREAD_CAP)
@@ -142,7 +165,17 @@ def _config_from_toml(data: Mapping[str, Any], path: Path) -> WorkerConfig:
         poll_seconds=poll_seconds,
         pilot_root=pilot_root,
         heartbeat_seconds=heartbeat_seconds,
+        token_env=token_env,
     )
+
+
+def _worker_id(section: Mapping[str, Any]) -> str:
+    worker_id = _require_str(section, "id")
+    if not WORKER_ID_PATTERN.fullmatch(worker_id):
+        raise WorkerConfigError(
+            f"worker id {worker_id!r} must match [A-Za-z0-9_.-]{{1,64}}"
+        )
+    return worker_id
 
 
 def _controller_url(value: str) -> str:
@@ -156,9 +189,8 @@ def _controller_url(value: str) -> str:
     return value.rstrip("/")
 
 
-def _token(worker: Mapping[str, Any]) -> str:
+def _token(worker: Mapping[str, Any], token_env: str | None) -> str:
     token = _optional_str(worker, "token")
-    token_env = _optional_str(worker, "token_env")
     if token is not None and token_env is not None:
         raise WorkerConfigError("set either token or token_env, not both")
     if token is not None:
