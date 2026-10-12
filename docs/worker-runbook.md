@@ -93,7 +93,7 @@ file is the service's identity and must stay in place until the service is unins
 ## Remote bootstrap (`vc node`)
 
 With key-based SSH access, `vc node probe|install|status|uninstall` installs and manages this
-worker on another machine from the CLI; the app's Nodes panel drives the same backend. The
+worker on another machine from the CLI; the app's Nodes tab drives the same backend. The
 command set, host requirements, host-key policy (`accept-new` default, `--strict-host-keys`
 opt-in), and uninstall semantics are in [install-runbook.md](install-runbook.md); the security
 stance is in [security-notes.md](security-notes.md). Everything managed lives under

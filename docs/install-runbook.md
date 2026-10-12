@@ -181,9 +181,11 @@ accepts `--install-dir` (default `~/.videocompressor`) and `--json`.
 - Uninstall stops the service and removes the worker config; `--purge` also removes
   `~/.videocompressor/`. Root mappings, scratch content, and the archive are never deleted.
 
-The app's Nodes panel wraps the same backend: add a node by host/IP with its SSH user and
+The app's Nodes tab wraps the same backend: add a node by host/IP with its SSH user and
 identity, map each registered root to that host's path, set scratch and thread cap, then probe,
-install, start/stop, or remove it from the GUI. The CLI above remains the scriptable fallback.
+install or update it; removing a node can uninstall the worker service on the host first. The
+entries persist in the per-user config (`[[nodes]]`), and the CLI above remains the scriptable
+fallback.
 
 ## Container alternative (Linux)
 
