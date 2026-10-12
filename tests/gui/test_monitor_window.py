@@ -77,6 +77,25 @@ class FakeConvertPanel(QWidget):
         self.refreshes += 1
 
 
+class FakeNodesPanel(QWidget):
+    """Stand-in for ``NodesPanel`` in the window tests."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.refreshes = 0
+        self.registry_refreshes = 0
+        self.shutdowns = 0
+
+    def refresh_list(self) -> None:
+        self.refreshes += 1
+
+    def refresh_registry(self) -> None:
+        self.registry_refreshes += 1
+
+    def shutdown(self) -> None:
+        self.shutdowns += 1
+
+
 def _spin_until(qapp, predicate: Callable[[], bool], timeout_s: float = 5.0) -> bool:
     """Process Qt events until ``predicate`` holds (QSignalSpy.wait is not reliable here)."""
     deadline = time.monotonic() + timeout_s
@@ -91,6 +110,7 @@ def _build(tmp_path: Path, *, hosted: bool = True, panel_active: bool = False, b
     session = FakeControllerSession(hosted=hosted)
     panel = FakePanel(panel_active)
     convert = FakeConvertPanel()
+    nodes = FakeNodesPanel()
     library_runner = FakeScanRunner()
     library_runner.busy = busy
     window = monitor_window.MonitorWindow(
@@ -101,6 +121,7 @@ def _build(tmp_path: Path, *, hosted: bool = True, panel_active: bool = False, b
         library=make_library(tmp_path, AppConfig(), library_runner),
         panel=panel,  # type: ignore[arg-type]
         convert=convert,  # type: ignore[arg-type]
+        nodes=nodes,  # type: ignore[arg-type]
     )
     return window, session, panel, library_runner
 
@@ -115,16 +136,18 @@ def _window_with_default_panel(tmp_path: Path, session: object) -> monitor_windo
     )
 
 
-def test_window_shows_convert_library_and_monitor_tabs(qapp, tmp_path):
+def test_window_shows_convert_library_monitor_and_nodes_tabs(qapp, tmp_path):
     window, _session, _panel, _runner = _build(tmp_path)
     try:
-        assert window.tabs.count() == 3
+        assert window.tabs.count() == 4
         assert window.tabs.tabText(0) == "Convert"
         assert window.tabs.tabText(1) == "Library"
         assert window.tabs.tabText(2) == "Monitor"
+        assert window.tabs.tabText(3) == "Nodes"
         assert window.tabs.widget(0) is window.convert
         assert window.tabs.widget(1) is window.library
         assert window.tabs.widget(2) is window.monitor
+        assert window.tabs.widget(3) is window.nodes
         assert window.tabs.currentWidget() is window.convert
     finally:
         dispose(window)
@@ -148,6 +171,17 @@ def test_switching_to_the_convert_tab_refreshes_it(qapp, tmp_path):
         window.tabs.setCurrentWidget(window.convert)
 
         assert window.convert.refreshes == 1
+    finally:
+        dispose(window)
+
+
+def test_switching_to_the_nodes_tab_refreshes_it(qapp, tmp_path):
+    window, _session, _panel, _runner = _build(tmp_path)
+    try:
+        window.tabs.setCurrentWidget(window.nodes)
+
+        assert window.nodes.refreshes == 1
+        assert window.nodes.registry_refreshes == 1
     finally:
         dispose(window)
 
@@ -231,6 +265,8 @@ def test_window_wires_a_monitor_session_into_the_panel(qapp, tmp_path):
             assert snapshot.workers == ()
         finally:
             window.monitor.shutdown()
+            window.nodes.shutdown()
+            _spin_until(qapp, lambda: not window.nodes.runner.busy)
             dispose(window)
     finally:
         controller.close()
@@ -247,4 +283,6 @@ def test_window_builds_the_panel_from_the_controller_session_client(qapp, tmp_pa
         assert snapshot.workers[0].worker_id == "homeserver"
     finally:
         window.monitor.shutdown()
+        window.nodes.shutdown()
+        _spin_until(qapp, lambda: not window.nodes.runner.busy)
         dispose(window)
