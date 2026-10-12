@@ -59,6 +59,7 @@ The `vc` entry point lives in the venv: `.venv/bin/vc --help`.
 | `vc scan --root PATH --folder PATH [--root-id ID] [--report PATH]` | Read-only dry run over a folder; writes only the report (optional tooling). |
 | `vc controller [--host H] [--port P] [--print-token]` | Serve the local controller (the GUI can do this instead). |
 | `vc worker --config PATH [--once]` | Run one processing node (see the worker runbook). |
+| `vc node probe/install/status/uninstall --host HOST …` | Install and manage a worker on a remote host over SSH (key-based; see the runbook). |
 | `vc gui [--config PATH] [--manifest PATH]` | Launch the graphical app (needs the `gui` extra). |
 
 Direct conversions are enqueued from the GUI through the controller's `POST /api/v1/jobs` API;

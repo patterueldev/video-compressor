@@ -76,6 +76,32 @@ Stop semantics:
   `restart: unless-stopped` the container comes back, so remove/stop the stack to keep it off).
 - **`--once`** is for watched/scripted runs: it exits immediately when nothing is claimable.
 
+## Remote bootstrap (`vc node`)
+
+With key-based SSH access, `vc node` installs and manages this worker from another machine
+without hand-editing anything on the node:
+
+```sh
+vc node probe --host node.example.com --user operator          # platform, Python, ffmpeg, disk, worker/service
+vc node install --host node.example.com --user operator \
+  --controller-url http://controller.example.com:8765 \
+  --token-env VC_WORKER_TOKEN \
+  --root archive=/path/to/archive \
+  --scratch-dir /path/to/scratch
+vc node status --host node.example.com
+vc node uninstall --host node.example.com                       # add --purge to remove the install dir
+```
+
+- Everything managed lives under `~/.videocompressor/` on the node (venv, staging, `worker.toml`
+  at mode 0600). The install ships a locally prepared wheelhouse, so the node needs no network
+  and no build toolchain; the token comes from `--token-env` or `--token-file` and never appears
+  in output. The node needs Python 3.12+ with venv/ensurepip and ffmpeg on `PATH`; no sudo is
+  used or required (the service itself is the per-user `vc worker install-service` from #51).
+- Host keys: `accept-new` by default (first contact is pinned, later changes fail); pass
+  `--strict-host-keys` to require a pre-seeded `known_hosts`. Auth is key-based only.
+- Uninstall stops the service and removes the worker config; `--purge` also removes
+  `~/.videocompressor/`. Root mappings, scratch content, and the archive are never deleted.
+
 ## Stop, resume, and recovery
 
 - The controller gives every claim a 90 s lease; workers renew it by heartbeat (15 s). No

@@ -11,7 +11,8 @@ issues implement against.
 | `videocompressor.core` | Engine: probing, capture time, fingerprints, scan/classification, manifest, encoding, validation, replacement. | stdlib and third-party libs (never PySide6) |
 | `videocompressor.controller` | Local HTTP controller: durable queue, worker registry, leases, dispatch, run log. Hosted inside the GUI process. | `core` |
 | `videocompressor.worker` | Worker agent: register/heartbeat/claim loop and the per-job pipeline; at most one FFmpeg conversion per node. | `core` |
-| `videocompressor.gui` | PySide6 app; a thin client that also hosts the controller in-process. | `core`, `controller` |
+| `videocompressor.node` | Remote node bootstrap over SSH: probe, install, configure, start, and uninstall a worker on another machine (issue #53). | `worker` |
+| `videocompressor.gui` | PySide6 app; a thin client that also hosts the controller in-process. | `core`, `controller`, `node` |
 | `videocompressor.cli` | `vc` entry points wiring the packages together. | all of the above (PySide6 import stays lazy) |
 
 Rules:
@@ -51,8 +52,22 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   `outcome` (per-job result type), `pipeline` (per-job copy → encode → validate → replace),
   `destination` (destination decode/resolve/place/delete), `transfer` (pilot delivery and
   replacement confirm), `config` (per-node TOML), `scratch` (local job dirs).
+- `node`: `models` (host/probe/spec/report types), `ssh` (OpenSSH runner seam), `probe`
+  (read-only host report), `config` (worker TOML render/push), `service` (frozen #51 CLI
+  adapter), `distribution` (wheelhouse build/validate), `bootstrap` (`vc node` orchestrator;
+  the #54 backend).
 - `cli`: `app` (parser + command registry), one module per subcommand (`probe`, `scan`,
-  `worker`, `controller`, `gui`), `constants` (exit codes).
+  `worker`, `node`, `controller`, `gui`), `constants` (exit codes).
+
+### Remote node bootstrap (issue #53)
+
+`videocompressor.node` drives a worker on another machine over SSH through the `SshRunner` seam
+(system OpenSSH binaries; faked in every test). The distribution artifact is a wheelhouse shipped
+over SSH (the node needs no network or build toolchain), and host keys default to `accept-new`
+with `--strict-host-keys` as the opt-in. The remote service operations call the
+`vc worker install-service / service-status / uninstall-service --config PATH` surface frozen by
+issue #51, isolated in `node/service.py`. The #54 Nodes panel uses this package as its backend;
+no SSH logic lives under `gui/`.
 
 ### Test layout
 
