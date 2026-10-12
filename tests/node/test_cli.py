@@ -15,6 +15,7 @@ from fixtures.node import (
     TOKEN,
     FakeSshRunner,
     probe_output,
+    service_status_json,
 )
 from videocompressor.cli import main
 from videocompressor.cli.constants import EXIT_USAGE
@@ -113,16 +114,35 @@ def test_install_and_status_through_the_cli(
 ) -> None:
     runner = FakeSshRunner()
     monkeypatch.setattr("videocompressor.cli.node.make_runner", lambda host: runner)
+    monkeypatch.setattr("videocompressor.node.bootstrap.time.sleep", lambda _: None)
     monkeypatch.setenv("VC_NODE_TOKEN", TOKEN)
 
     assert main(_install_args(wheelhouse)) == 0
     out = capsys.readouterr().out
     assert "worker node-a ready on 192.0.2.10" in out
+    assert "(service: running)" in out
     assert TOKEN not in out
     assert runner.writes and runner.writes[0][0] == CONFIG_PATH
 
     assert main(["node", "status", "--host", "192.0.2.10"]) == 0
     assert "status 192.0.2.10" in capsys.readouterr().out
+
+
+def test_install_reports_a_dead_service_truthfully(
+    wheelhouse: Path, monkeypatch, capsys
+) -> None:
+    runner = FakeSshRunner(service_out=service_status_json("failed", detail="ActiveState=failed"))
+    monkeypatch.setattr("videocompressor.cli.node.make_runner", lambda host: runner)
+    monkeypatch.setattr("videocompressor.node.bootstrap.time.sleep", lambda _: None)
+    monkeypatch.setenv("VC_NODE_TOKEN", TOKEN)
+
+    assert main(_install_args(wheelhouse)) == 0
+
+    captured = capsys.readouterr()
+    assert "worker node-a installed on 192.0.2.10" in captured.out
+    assert "(service: failed: ActiveState=failed)" in captured.out
+    assert "service: running" not in captured.out
+    assert "not active" in captured.err
 
 
 def test_uninstall_through_the_cli(monkeypatch, capsys) -> None:

@@ -17,6 +17,8 @@ from __future__ import annotations
 import re
 import shlex
 import shutil
+import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 
@@ -39,7 +41,13 @@ from videocompressor.node.models import (
     WorkerSpec,
 )
 from videocompressor.node.probe import probe_node
-from videocompressor.node.service import install_service, service_status, uninstall_service
+from videocompressor.node.service import (
+    confirmed_service_status,
+    install_service,
+    parse_service_status,
+    service_status,
+    uninstall_service,
+)
 from videocompressor.node.ssh import SshRunner
 from videocompressor.worker.config import WORKER_ID_PATTERN
 
@@ -68,6 +76,7 @@ class NodeBootstrap:
         python_bin: str = "python3",
         source_dir: Path = Path("."),
         wheelhouse: Path | None = None,
+        sleep: Callable[[float], None] | None = None,
     ) -> None:
         self.runner = runner
         self.host = host
@@ -75,6 +84,7 @@ class NodeBootstrap:
         self.python_bin = python_bin
         self.source_dir = source_dir
         self.wheelhouse = wheelhouse
+        self._sleep = sleep if sleep is not None else time.sleep
 
     # -- read-only ---------------------------------------------------------
 
@@ -82,13 +92,15 @@ class NodeBootstrap:
         """Probe the host; when a managed worker exists, also query its service."""
         probe = probe_node(self.runner, install_dir=self.install_dir, scratch_dir=scratch_dir)
         if probe.venv_present and probe.config_present:
-            result = service_status(
-                self.runner,
-                venv_dir=self._venv_dir(probe.install_dir),
-                config_path=worker_config_path(probe.install_dir),
+            state = parse_service_status(
+                service_status(
+                    self.runner,
+                    venv_dir=self._venv_dir(probe.install_dir),
+                    config_path=worker_config_path(probe.install_dir),
+                )
             )
-            probe.service_ok = result.returncode == 0
-            probe.service_status = _first_line(result.stdout or result.stderr) or None
+            probe.service_ok = state.ok
+            probe.service_status = state.summary()
         return probe
 
     def status(self) -> StatusReport:
@@ -166,24 +178,19 @@ class NodeBootstrap:
                     detail=_first_line(result.stdout or result.stderr) or "service installed",
                 )
             )
-            status_result = service_status(
-                self.runner, venv_dir=venv_dir, config_path=config_path
+            state = confirmed_service_status(
+                self.runner,
+                venv_dir=venv_dir,
+                config_path=config_path,
+                sleep=self._sleep,
             )
-            probe.service_ok = status_result.returncode == 0
-            probe.service_status = (
-                _first_line(status_result.stdout or status_result.stderr) or None
-            )
-            steps.append(
-                StepReport(
-                    "service-status",
-                    ok=status_result.returncode == 0,
-                    detail=probe.service_status or f"exit {status_result.returncode}",
-                )
-            )
+            probe.service_ok = state.ok
+            probe.service_status = state.summary()
+            steps.append(StepReport("service-status", ok=state.ok, detail=state.summary()))
             warnings: list[str] = []
-            if status_result.returncode != 0:
+            if not state.ok:
                 warnings.append(
-                    "service-status reported a non-zero exit after the install; "
+                    f"the service is not active after install ({state.summary()}); "
                     "check the service on the remote host"
                 )
             version = self._worker_version(venv_dir)

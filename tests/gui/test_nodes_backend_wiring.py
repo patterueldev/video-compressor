@@ -31,6 +31,7 @@ def wired(tmp_path: Path, monkeypatch):
     """A NodesService whose default factory builds a real NodeBootstrap on a fake SSH."""
     runner = FakeSshRunner()
     monkeypatch.setattr(nodes_service, "make_runner", lambda host: runner)
+    monkeypatch.setattr("videocompressor.node.bootstrap.time.sleep", lambda _: None)
     config = AppConfig()
     config.controller.token = TOKEN
     service = NodesService(config, source_dir=tmp_path, wheelhouse=fake_wheelhouse(tmp_path))
