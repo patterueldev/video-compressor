@@ -2,9 +2,9 @@
 
 The recipe matches the plan.md settings table: scale to 720-pixel height, average
 video bitrate, AAC audio, QuickTime-compatible ``hvc1`` tagging, preserved source
-metadata, and telemetry/data streams dropped. FFmpeg runs on the worker's local
-copy of the source; the archive is reached only through the access-transport seam
-(docs/architecture.md).
+metadata, while chapters and telemetry/data streams are dropped. FFmpeg runs on
+the worker's local copy of the source; the archive is reached only through the
+access-transport seam (docs/architecture.md).
 """
 
 from __future__ import annotations
@@ -92,12 +92,12 @@ def build_pass2_command(
     command += [
         "-map",
         "0:a?",
-        "-c:a",
-        settings.audio_codec,
-        "-b:a",
-        f"{settings.audio_bitrate_kbps}k",
+        "-c:a", settings.audio_codec,
+        "-b:a", f"{settings.audio_bitrate_kbps}k",
         "-map_metadata",
         "0",
+        "-map_chapters",
+        "-1",
         "-tag:v",
         "hvc1",
         "-movflags",
