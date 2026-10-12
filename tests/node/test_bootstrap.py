@@ -18,9 +18,11 @@ from fixtures.node import (
     WHEEL,
     FakeSshRunner,
     probe_output,
+    service_status_json,
 )
 from videocompressor.node import NodeBootstrap, RemoteHost, WorkerSpec
-from videocompressor.node.models import RemoteValidationError, ServiceError
+from videocompressor.node.models import CommandResult, RemoteValidationError, ServiceError
+from videocompressor.node.service import STATUS_SETTLE_SECONDS
 
 HOST = RemoteHost(host="192.0.2.10")
 
@@ -33,8 +35,10 @@ def _wheelhouse(tmp_path: Path) -> Path:
 
 
 def _bootstrap(runner: FakeSshRunner, tmp_path: Path, **overrides: object) -> NodeBootstrap:
+    options: dict[str, object] = {"sleep": lambda _: None}
+    options.update(overrides)
     return NodeBootstrap(
-        runner, HOST, wheelhouse=_wheelhouse(tmp_path), **overrides  # type: ignore[arg-type]
+        runner, HOST, wheelhouse=_wheelhouse(tmp_path), **options  # type: ignore[arg-type]
     )
 
 
@@ -59,7 +63,7 @@ def test_probe_reports_service_when_a_worker_exists(tmp_path: Path) -> None:
     assert probe.venv_present is True
     assert probe.config_present is True
     assert probe.service_ok is True
-    assert probe.service_status == "worker service: running"
+    assert probe.service_status == "active"
     assert runner.commands_with("service-status")
 
 
@@ -128,6 +132,47 @@ def test_install_warns_when_service_status_is_non_zero(tmp_path: Path) -> None:
     assert report.ok is True
     assert report.warnings
     assert report.probe.service_ok is False
+
+
+def test_install_reports_the_true_service_state(tmp_path: Path) -> None:
+    runner = FakeSshRunner()
+    report = _bootstrap(runner, tmp_path).install(_spec())
+
+    assert report.probe.service_ok is True
+    assert report.probe.service_status == "active"
+    step = next(step for step in report.steps if step.step == "service-status")
+    assert step.ok is True
+
+
+def test_install_warns_when_the_service_is_not_active(tmp_path: Path) -> None:
+    runner = FakeSshRunner(service_out=service_status_json("failed", detail="ActiveState=failed"))
+    report = _bootstrap(runner, tmp_path).install(_spec())
+
+    assert report.ok is True
+    assert report.probe.service_ok is False
+    assert report.probe.service_status == "failed: ActiveState=failed"
+    assert any("not active" in warning for warning in report.warnings)
+    step = next(step for step in report.steps if step.step == "service-status")
+    assert step.ok is False
+
+
+def test_install_rechecks_a_service_that_dies_after_start(tmp_path: Path) -> None:
+    runner = FakeSshRunner()
+    answers = iter(
+        [
+            service_status_json("active"),
+            service_status_json("failed", detail="ActiveState=failed"),
+        ]
+    )
+    runner.on("service-status", lambda command: CommandResult(command, 0, next(answers), ""))
+    sleeps: list[float] = []
+
+    report = _bootstrap(runner, tmp_path, sleep=sleeps.append).install(_spec())
+
+    assert report.probe.service_ok is False
+    assert report.probe.service_status == "failed: ActiveState=failed"
+    assert sleeps == [STATUS_SETTLE_SECONDS]
+    assert any("not active" in warning for warning in report.warnings)
 
 
 def test_install_defaults_the_worker_id_to_the_hostname(tmp_path: Path) -> None:

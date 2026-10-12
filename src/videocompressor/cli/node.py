@@ -205,8 +205,12 @@ def _install(args: argparse.Namespace, host: RemoteHost, bootstrap: NodeBootstra
     else:
         _print_steps(report.steps)
         _print_warnings(report.warnings)
-        service = "running" if report.probe.service_ok else "state uncertain (see steps)"
-        print(f"vc node: worker {report.worker_id} ready on {host.destination()}"
+        if report.probe.service_ok:
+            service, outcome = "running", "ready"
+        else:
+            service = report.probe.service_status or "state unknown"
+            outcome = "installed"
+        print(f"vc node: worker {report.worker_id} {outcome} on {host.destination()}"
               f" (service: {service})")
     return 0 if report.ok else EXIT_ERROR
 

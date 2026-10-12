@@ -7,6 +7,7 @@ hosts and paths are documentation placeholders (192.0.2.0/24, example.com).
 
 from __future__ import annotations
 
+import json
 import shlex
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,21 @@ def probe_output(**overrides: object) -> str:
     return "".join(f"VC_PROBE_{key}={value}\n" for key, value in values.items())
 
 
+def service_status_json(
+    state: str = "active", *, detail: str = "", installed: bool = True
+) -> str:
+    """A schema-1 ``vc worker service-status --json`` document."""
+    return json.dumps(
+        {
+            "schema": 1,
+            "operation": "service-status",
+            "installed": installed,
+            "state": state,
+            "detail": detail,
+        }
+    )
+
+
 class FakeSshRunner:
     """A scripted SshRunner double that records every remote interaction."""
 
@@ -60,7 +76,7 @@ class FakeSshRunner:
         *,
         probe: str | None = None,
         service_rc: int = 0,
-        service_out: str = "worker service: running",
+        service_out: str = service_status_json(),
         files: dict[str, str] | None = None,
     ) -> None:
         self.commands: list[str] = []

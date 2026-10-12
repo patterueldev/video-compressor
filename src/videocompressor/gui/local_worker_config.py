@@ -54,8 +54,8 @@ def worker_command(worker_config_path: Path) -> tuple[str, ...]:
 
     ``sys.executable`` is used unresolved on purpose: resolving a venv's python
     symlink escapes the environment, so the spawned interpreter could no longer
-    import the package. (Issue #51's ``default_worker_command`` resolves it;
-    that venv hazard is reported separately, not changed here.)
+    import the package. Issue #51's ``default_worker_command`` follows the same
+    rule since #64, so the service unit runs the venv interpreter too.
     """
     return (
         sys.executable,
