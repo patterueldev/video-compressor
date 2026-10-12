@@ -118,7 +118,8 @@ Notes:
   absolute paths in `worker.toml`.
 - Configs that use `token_env`: the resolved value is materialized into the service environment
   at install time (a 0600 `EnvironmentFile` on Linux, `EnvironmentVariables` in the 0600 plist on
-  macOS) and is never printed. **Rotating the token requires re-running `install-service`.**
+  macOS) and is never printed. Uninstall removes the Linux env file even if the config later
+  switched to an inline token. **Rotating the token requires re-running `install-service`.**
 - Reinstalling an identical unit on a running service performs no command; a changed unit is
   rewritten and the service restarted. The launchd log files grow until macOS log rotation
   handles them; the systemd journal is bounded by journald.

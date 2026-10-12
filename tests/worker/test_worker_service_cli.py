@@ -144,6 +144,37 @@ def test_dry_run_preview_redacts_the_token(tmp_path: Path, monkeypatch, capsys) 
     assert not (paths.home / "Library" / "LaunchAgents").exists()
 
 
+def test_uninstall_removes_the_token_env_file_created_by_install(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    paths, _ = patch_cli(monkeypatch, tmp_path, platform="linux")
+    monkeypatch.setenv("VC_TEST_WORKER_TOKEN", TOKEN)
+    config = write_worker_config(tmp_path, token_env="VC_TEST_WORKER_TOKEN")
+
+    assert main(["worker", "install-service", "--config", str(config)]) == 0
+    env_file = paths.config_home / "videocompressor" / "worker-node-a.env"
+    assert env_file.read_text(encoding="utf-8") == f"VC_TEST_WORKER_TOKEN={TOKEN}\n"
+    capsys.readouterr()
+
+    assert main(["worker", "uninstall-service", "--config", str(config)]) == 0
+
+    assert not env_file.exists()
+
+
+def test_status_json_reports_the_env_file_location(tmp_path: Path, monkeypatch, capsys) -> None:
+    paths, _ = patch_cli(monkeypatch, tmp_path, platform="linux")
+    monkeypatch.setenv("VC_TEST_WORKER_TOKEN", TOKEN)
+    config = write_worker_config(tmp_path, token_env="VC_TEST_WORKER_TOKEN")
+    assert main(["worker", "install-service", "--config", str(config)]) == 0
+    capsys.readouterr()
+
+    assert main(["worker", "service-status", "--config", str(config), "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["installed"] is True
+    assert payload["env_file"] == str(paths.config_home / "videocompressor" / "worker-node-a.env")
+
+
 def test_uninstall_json_and_absent_second_run(tmp_path: Path, monkeypatch, capsys) -> None:
     patch_cli(monkeypatch, tmp_path)
     config = write_worker_config(tmp_path)

@@ -43,7 +43,11 @@ def test_systemd_names_paths_and_logs(tmp_path: Path) -> None:
     assert unit_path(spec, paths) == (
         paths.config_home / "systemd" / "user" / "videocompressor-worker-node-a.service"
     )
-    assert env_file_path(spec, paths) is None
+    # The env-file path is deterministic for the worker id, whether or not the
+    # spec came from a full config read (the file is only written for token_env).
+    assert env_file_path(spec, paths) == (
+        paths.config_home / "videocompressor" / "worker-node-a.env"
+    )
     assert log_paths(spec, paths) == {"journal": "videocompressor-worker-node-a.service"}
 
 
@@ -122,6 +126,13 @@ def test_systemd_unit_uses_environment_file_not_the_value(tmp_path: Path) -> Non
 
     assert f"EnvironmentFile={env_file_path(spec, paths)}\n" in text
     assert TOKEN not in text
+
+
+def test_systemd_inline_token_has_no_environment_file(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path, "linux")
+    spec = make_spec(tmp_path / "worker.toml")
+
+    assert "EnvironmentFile=" not in render_systemd_unit(spec, paths)
 
 
 def test_systemd_quoting_and_specifier_escaping(tmp_path: Path) -> None:

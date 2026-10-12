@@ -263,6 +263,72 @@ def test_linux_token_env_materialized_rotated_and_removed(tmp_path: Path, paths_
     assert not env_file.exists()
 
 
+def test_install_creates_the_macos_log_dir(tmp_path: Path, paths_for) -> None:
+    paths = paths_for("macos")
+    assert not paths.log_dir.exists()
+
+    install_service(
+        make_spec(tmp_path / "worker.toml"), paths=paths, runner=RecordingRunner()
+    )
+
+    assert paths.log_dir.is_dir()
+
+
+def test_install_dry_run_does_not_create_the_macos_log_dir(tmp_path: Path, paths_for) -> None:
+    paths = paths_for("macos")
+
+    install_service(
+        make_spec(tmp_path / "worker.toml"), paths=paths, runner=RecordingRunner(), dry_run=True
+    )
+
+    assert not paths.log_dir.exists()
+
+
+def test_uninstall_removes_the_env_file_even_with_an_id_only_spec(
+    tmp_path: Path, paths_for
+) -> None:
+    paths = paths_for("linux")
+    spec = make_spec(tmp_path / "worker.toml", token_env="VC_WORKER_TOKEN", token_value=TOKEN)
+    install_service(spec, paths=paths, runner=RecordingRunner())
+    env_file = env_file_path(spec, paths)
+    assert env_file is not None and env_file.is_file()
+
+    # The CLI builds status/uninstall specs from the worker id only.
+    light = make_spec(tmp_path / "worker.toml")
+    uninstall_service(light, paths=paths, runner=RecordingRunner())
+
+    assert not env_file.exists()
+
+
+def test_uninstall_cleans_a_leftover_env_file_when_the_unit_is_gone(
+    tmp_path: Path, paths_for
+) -> None:
+    paths = paths_for("linux")
+    spec = make_spec(tmp_path / "worker.toml", token_env="VC_WORKER_TOKEN", token_value=TOKEN)
+    env_file = env_file_path(spec, paths)
+    assert env_file is not None
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_file.write_text("VC_WORKER_TOKEN=leftover\n", encoding="utf-8")
+
+    result = uninstall_service(spec, paths=paths, runner=RecordingRunner())
+
+    assert result.result == RESULT_ABSENT
+    assert not env_file.exists()
+
+
+def test_status_reports_the_env_file_location(tmp_path: Path, paths_for) -> None:
+    paths = paths_for("linux")
+    spec = make_spec(tmp_path / "worker.toml", token_env="VC_WORKER_TOKEN", token_value=TOKEN)
+    install_service(spec, paths=paths, runner=RecordingRunner())
+    light = make_spec(tmp_path / "worker.toml")
+    runner = RecordingRunner(by_binary={"systemctl": systemd_show(active="active")})
+
+    status = service_status(light, paths=paths, runner=runner)
+
+    assert status.state == STATE_ACTIVE
+    assert status.to_dict()["env_file"] == str(env_file_path(spec, paths))
+
+
 def test_payloads_never_contain_the_token(tmp_path: Path, paths_for) -> None:
     paths = paths_for("macos")
     spec = make_spec(tmp_path / "worker.toml", token_env="VC_WORKER_TOKEN", token_value=TOKEN)

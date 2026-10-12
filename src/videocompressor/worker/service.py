@@ -252,7 +252,7 @@ def install_service(
 
     installed = unit.is_file()
     unchanged = installed and unit.read_bytes() == desired_unit
-    if unchanged and env_file is not None:
+    if unchanged and spec.token_env is not None and env_file is not None:
         unchanged = env_file.is_file() and env_file.read_bytes() == desired_env
 
     if unchanged:
@@ -264,8 +264,13 @@ def install_service(
         actions = bring_up_actions(spec, paths, update=installed)
         if not dry_run:
             _write_file(unit, desired_unit, _unit_mode(paths))
-            if env_file is not None:
+            if spec.token_env is not None and env_file is not None:
                 _write_file(env_file, desired_env, _SECRET_MODE)
+
+    if not dry_run and paths.platform == PLATFORM_MACOS:
+        # launchd fails to bootstrap when a StandardOutPath/StandardErrorPath
+        # directory is missing, so create it before the agent is loaded.
+        paths.log_dir.mkdir(parents=True, exist_ok=True)
 
     executed = run_actions(actions, runner, dry_run=dry_run)
     return ServiceResult("install-service", result, spec, paths, executed, dry_run)
@@ -278,14 +283,16 @@ def uninstall_service(
     check_platform(paths)
     unit = unit_path(spec, paths)
     if not unit.is_file():
+        # Clean a leftover token env file even when the unit itself is gone;
+        # uninstall must never leave a plaintext secret behind.
+        if not dry_run:
+            _remove_env_file(spec, paths)
         return ServiceResult("uninstall-service", RESULT_ABSENT, spec, paths, (), dry_run)
 
     executed = run_actions(stop_actions(spec, paths), runner, dry_run=dry_run)
     if not dry_run:
         unit.unlink(missing_ok=True)
-        env_file = env_file_path(spec, paths)
-        if env_file is not None:
-            env_file.unlink(missing_ok=True)
+        _remove_env_file(spec, paths)
     executed += run_actions(reload_actions(spec, paths), runner, dry_run=dry_run)
     return ServiceResult("uninstall-service", RESULT_REMOVED, spec, paths, executed, dry_run)
 
@@ -347,6 +354,12 @@ def _env_document(spec: ServiceSpec) -> bytes:
     if spec.token_env is None:
         return b""
     return f"{spec.token_env}={spec.token_value or ''}\n".encode()
+
+
+def _remove_env_file(spec: ServiceSpec, paths: ServicePaths) -> None:
+    env_file = env_file_path(spec, paths)
+    if env_file is not None:
+        env_file.unlink(missing_ok=True)
 
 
 def _unit_mode(paths: ServicePaths) -> int:

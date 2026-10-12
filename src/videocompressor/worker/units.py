@@ -66,12 +66,14 @@ def unit_path(spec: ServiceSpec, paths: ServicePaths) -> Path:
 
 
 def env_file_path(spec: ServiceSpec, paths: ServicePaths) -> Path | None:
-    """File that carries a ``token_env`` token, or ``None`` when unused.
+    """Environment file for a ``token_env`` config, or ``None`` without one.
 
-    macOS embeds the variable in the plist; only systemd needs a separate
-    ``EnvironmentFile``.
+    Linux only: macOS embeds the variable in the plist. The path is deterministic
+    for a worker id, so it is reported and removed even when the spec came from a
+    light config read that did not carry ``token_env``; the file is only
+    *created* when the config uses ``token_env``.
     """
-    if spec.token_env is None or paths.platform == "macos":
+    if paths.platform == "macos":
         return None
     return paths.config_home / "videocompressor" / f"worker-{spec.worker_id}.env"
 
@@ -132,7 +134,7 @@ def render_systemd_unit(
         f"ExecStart={' '.join(_arg(part) for part in spec.command)}",
     ]
     env_file = env_file_path(spec, paths)
-    if env_file is not None:
+    if spec.token_env is not None and env_file is not None:
         lines.append(f"EnvironmentFile={_arg(str(env_file))}")
     lines += [
         "Restart=on-failure",
