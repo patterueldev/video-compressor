@@ -1,10 +1,11 @@
-"""The application window: convert, library, and monitor in tabs (issues #9 and #41).
+"""The application window: convert, library, monitor, and nodes in tabs.
 
 The window embeds the issue #8 :class:`MainWindow` unchanged as the Library tab,
-the issue #9 monitor as the Monitor tab, and the issue #41 convert flow as the
-first tab, so the direct conversion path is the default view. Closing stops the
-monitor poller and the hosted controller (an attached controller keeps running);
-the issue #8 scan guard is mirrored here because the embedded window no longer
+the issue #9 monitor as the Monitor tab, the issue #41 convert flow as the
+first tab, and the issue #54 nodes panel as the Nodes tab, so the direct
+conversion path is the default view. Closing stops the monitor poller, the nodes
+runner, and the hosted controller (an attached controller keeps running); the
+issue #8 scan guard is mirrored here because the embedded window no longer
 receives its own ``closeEvent``.
 """
 
@@ -20,6 +21,7 @@ from videocompressor.gui.convert_panel import ConvertPanel
 from videocompressor.gui.main_window import MainWindow
 from videocompressor.gui.monitor_panel import MonitorPanel
 from videocompressor.gui.monitor_service import MonitorSession
+from videocompressor.gui.nodes_panel import NodesPanel
 
 __all__ = ["MonitorWindow"]
 
@@ -43,6 +45,7 @@ class MonitorWindow(QMainWindow):
         library: MainWindow | None = None,
         panel: MonitorPanel | None = None,
         convert: ConvertPanel | None = None,
+        nodes: NodesPanel | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -72,10 +75,21 @@ class MonitorWindow(QMainWindow):
             if convert is not None
             else ConvertPanel(session.client, config, parent=self)
         )
+        self.nodes = (
+            nodes
+            if nodes is not None
+            else NodesPanel(
+                config=config,
+                config_path=config_path,
+                client=session.client,
+                parent=self,
+            )
+        )
         self.tabs = QTabWidget(self)
         self.tabs.addTab(self.convert, "Convert")
         self.tabs.addTab(self.library, "Library")
         self.tabs.addTab(self.monitor, "Monitor")
+        self.tabs.addTab(self.nodes, "Nodes")
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.convert.enqueued.connect(self._on_enqueued)
         self.setCentralWidget(self.tabs)
@@ -91,6 +105,9 @@ class MonitorWindow(QMainWindow):
         """Refresh the convert form when its tab becomes current."""
         if self.tabs.currentWidget() is self.convert:
             self.convert.refresh()
+        elif self.tabs.currentWidget() is self.nodes:
+            self.nodes.refresh_list()
+            self.nodes.refresh_registry()
 
     def closeEvent(self, event) -> None:
         """Guard an active scan, confirm a hosted-controller close, then settle."""
@@ -104,5 +121,6 @@ class MonitorWindow(QMainWindow):
                 event.ignore()
                 return
         self.monitor.shutdown()
+        self.nodes.shutdown()
         self.session.close()
         event.accept()

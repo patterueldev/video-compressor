@@ -38,7 +38,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
 - `core`: `models` (dataclasses/enums), `probe`, `capture_time`, `fingerprint`, `scan`,
   `manifest` (SQLite queue), `manifest_schema` (queue DDL, migration, row codecs), `markers`,
   `ffmpeg` (two-pass x265 encode), `validate`, `replace`, `place` (destination placement),
-  `records` (destination completion records), `recover`, `config` (per-user TOML).
+  `records` (destination completion records), `recover`, `config` (per-user TOML),
+  `nodes` (per-node entries: SSH target, root mappings; issue #54).
 - `controller`: `server` (facade), `http` (HTTP plumbing),
   `registry`/`jobs`/`enqueue`/`sweep` (mixins), `store` (SQLite bookkeeping),
   `memory_manifest` (in-memory double/fallback), `protocol` (payload rules), `constants`.
@@ -47,7 +48,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   monitor (`monitor_app`, `monitor_window`, `monitor_panel`, `monitor_tables`, `monitor_runner`,
   `monitor_service`, `monitor_client`, `controller_session`; issue #9) and the convert flow
   (`convert_panel`, `convert_destination`, `convert_drop` widgets plus the pure Python
-  `convert_service`; issue #41).
+  `convert_service`; issue #41) and the Nodes panel (`nodes_panel`, `nodes_dialog`,
+  `nodes_tables`, `nodes_runner`, `nodes_service`; issue #54).
 - `worker`: `agent` (register/heartbeat/claim loop and stop), `client` (controller HTTP v1),
   `outcome` (per-job result type), `pipeline` (per-job copy → encode → validate → replace),
   `destination` (destination decode/resolve/place/delete), `transfer` (pilot delivery and
@@ -69,13 +71,15 @@ over SSH (the node needs no network or build toolchain), and host keys default t
 with `--strict-host-keys` as the opt-in. The remote service operations call the
 `vc worker install-service / service-status / uninstall-service --config PATH` surface frozen by
 issue #51, isolated in `node/service.py`. The #54 Nodes panel uses this package as its backend;
-no SSH logic lives under `gui/`.
+no SSH logic lives under `gui/`. The Nodes tab (`gui/nodes_panel.py`, issue #54) wires
+`NodeBootstrap` behind a fakeable factory and stores one `[[nodes]]` entry per host in the
+per-user config.
 
 ### Test layout
 
 `tests/conftest.py` is a registrar only: fixture groups live in `tests/fixtures/<domain>.py` and
 are registered through `pytest_plugins`. Suites are the top-level `tests/test_*.py` files and
-`tests/cli/**`; `tests/worker/**` (issue #6) and `tests/gui/**` (issues #8 and #9) hold the per-area
+`tests/cli/**`; `tests/worker/**` (issue #6) and `tests/gui/**` (issues #8, #9, and #54) hold the per-area
 suites.
 `tests/test_imports.py` checks that every module imports without the `gui` extra;
 `tests/test_architecture.py` checks cross-package import direction and file-size budgets
