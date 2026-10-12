@@ -24,7 +24,8 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[gui]'    # add the PySide6 GUI
 ```
 
-The `vc` entry point lives in the venv: `.venv/bin/vc --help`.
+The `vc` entry point lives in the venv: `.venv/bin/vc --help`. Worker-node installs (macOS and
+Linux), per-user services, and remote bootstrap live in [docs/install-runbook.md](docs/install-runbook.md).
 
 ## Quick start (convert flow)
 
@@ -51,6 +52,10 @@ The `vc` entry point lives in the venv: `.venv/bin/vc --help`.
 4. Press Start. The Monitor tab shows workers, per-node progress, ETA, and the run log; stopping
    is safe (the active clip is requeued and restarts later).
 
+With the default settings the app also runs a local worker on this machine, so a fresh install
+converts without starting a node by hand; the local worker appears in the Monitor like any other
+node and is controlled from there.
+
 ## CLI
 
 | Command | Purpose |
@@ -59,7 +64,7 @@ The `vc` entry point lives in the venv: `.venv/bin/vc --help`.
 | `vc scan --root PATH --folder PATH [--root-id ID] [--report PATH]` | Read-only dry run over a folder; writes only the report (optional tooling). |
 | `vc controller [--host H] [--port P] [--print-token]` | Serve the local controller (the GUI can do this instead). |
 | `vc worker --config PATH [--once]` | Run one processing node (see the worker runbook). |
-| `vc node probe/install/status/uninstall --host HOST …` | Install and manage a worker on a remote host over SSH (key-based; see the runbook). |
+| `vc node probe/install/status/uninstall --host HOST …` | Install and manage a worker on a remote host over SSH (key-based; see the install runbook). |
 | `vc gui [--config PATH] [--manifest PATH]` | Launch the graphical app (needs the `gui` extra). |
 
 Direct conversions are enqueued from the GUI through the controller's `POST /api/v1/jobs` API;
@@ -75,20 +80,25 @@ The app runs a local worker by default (setting: `[local_worker]` in the per-use
 fresh install converts without starting a worker by hand; its node appears in the Monitor, where
 it can be stopped or switched to a keep-running service.
 
+- [docs/install-runbook.md](docs/install-runbook.md) — install and manage a node on macOS and
+  Linux (virtualenv or pipx, per-user service, remote bootstrap over SSH).
 - [docs/worker-runbook.md](docs/worker-runbook.md) — native node configuration, start/stop,
   resume and recovery semantics, troubleshooting.
+- [docs/security-notes.md](docs/security-notes.md) — SSH keys and host keys, token handling,
+  and controller bind/firewall guidance.
 - [deploy/homeserver/README.md](deploy/homeserver/README.md) — the container-based homeserver
   deployment (compose stack, logs, operator checkpoint).
 
 Workers receive the access token out of band (`VC_WORKER_TOKEN`); the controller prints it with
-`vc controller --print-token`. Never commit a token or a real archive path.
+`vc controller --print-token`. Never commit a token or a real archive path; see the
+[security notes](docs/security-notes.md).
 
 ## Configuration and state
 
 - Per-user config (macOS):
   `~/Library/Application Support/Video Compressor/config.toml` — capture-time mode, named
-  encoding templates, registered roots (sources and destinations), and the controller bind
-  address/token.
+  encoding templates, registered roots (sources and destinations), the controller bind
+  address/token, the local-worker setting, and the configured remote nodes.
 - Queue manifest: `manifest.sqlite` in the same folder; the controller owns it while a run is
   active, and dry runs only read it.
 - Per-node worker config: separate TOML file owned by each worker (see the runbook); its
@@ -119,6 +129,9 @@ Workers receive the access token out of band (`VC_WORKER_TOKEN`); the controller
 
 - [plan.md](plan.md) — product spec and acceptance criteria.
 - [docs/architecture.md](docs/architecture.md) — module boundaries, seams, controller HTTP v1.
+- [docs/install-runbook.md](docs/install-runbook.md) — install the app (macOS) and worker nodes
+  (macOS and Linux), service management, remote bootstrap.
 - [docs/worker-runbook.md](docs/worker-runbook.md) — run a worker node.
+- [docs/security-notes.md](docs/security-notes.md) — SSH, token, and controller-bind guidance.
 - [docs/pilot-notes.md](docs/pilot-notes.md) — optional dry runs, transport decision, rerun matrix.
 - [docs/v1-readiness.md](docs/v1-readiness.md) — the V1 checklist and operator milestones.
