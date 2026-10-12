@@ -55,6 +55,9 @@ RunServiceCommand = Callable[[Sequence[str], Mapping[str, str]], ServiceCommandR
 def spawn_child(argv: Sequence[str], env: Mapping[str, str], log_dir: Path) -> ProcessHandle:
     """Default spawner: a child logging beside its generated config.
 
+    ``env`` is the complete child environment (the inherited process
+    environment plus the token overlay) and is forwarded verbatim.
+
     Not a new session on purpose: the child still sees the app's terminal
     signals, and the supervisor terminates it explicitly on close/stop.
     """
