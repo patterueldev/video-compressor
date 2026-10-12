@@ -48,8 +48,10 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   monitor (`monitor_app`, `monitor_window`, `monitor_panel`, `monitor_tables`, `monitor_runner`,
   `monitor_service`, `monitor_client`, `controller_session`; issue #9) and the convert flow
   (`convert_panel`, `convert_destination`, `convert_drop` widgets plus the pure Python
-  `convert_service`; issue #41) and the Nodes panel (`nodes_panel`, `nodes_dialog`,
-  `nodes_tables`, `nodes_runner`, `nodes_service`; issue #54).
+  `convert_service`; issue #41), the Nodes panel (`nodes_panel`, `nodes_dialog`,
+  `nodes_tables`, `nodes_runner`, `nodes_service`; issue #54), and the app-managed local
+  worker (`local_worker` supervisor, `local_worker_config` generation,
+  `local_worker_service` subprocess seams, plus the `local_worker_panel` strip; issue #52).
 - `worker`: `agent` (register/heartbeat/claim loop and stop), `client` (controller HTTP v1),
   `outcome` (per-job result type), `pipeline` (per-job copy → encode → validate → replace),
   `destination` (destination decode/resolve/place/delete), `transfer` (pilot delivery and
@@ -74,6 +76,21 @@ issue #51, isolated in `node/service.py`. The #54 Nodes panel uses this package 
 no SSH logic lives under `gui/`. The Nodes tab (`gui/nodes_panel.py`, issue #54) wires
 `NodeBootstrap` behind a fakeable factory and stores one `[[nodes]]` entry per host in the
 per-user config.
+
+### App-managed local worker (issue #52)
+
+The GUI runs a worker on its own machine by default (`[local_worker]` in the per-user config,
+`enabled = true`). The supervisor (`gui/local_worker.py`) generates
+`<config dir>/local-worker.toml` from the registered roots — each root mapped to this machine's
+path — and starts it as a child process managed by the app (the same `vc worker --config PATH`
+argv as the service); "keep running when the app closes" switches to the #51 service through the
+frozen `vc worker install-service / service-status / uninstall-service --config PATH --json`
+commands. The token travels in `VC_WORKER_TOKEN` only and is never written into the generated
+file. Startup is idempotent: an online worker with the same id (or the same root mapping) is
+adopted, and a registration row whose last heartbeat predates a confirmed app stop is treated as
+dead instead of blocking the default flow. Closing the app terminates the child (the active clip
+requeues) unless keep-running leaves the service up; the local node appears in the Monitor like
+any other node.
 
 ### Test layout
 

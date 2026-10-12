@@ -21,6 +21,7 @@ __all__ = [
     "ControllerAttachError",
     "ControllerBindError",
     "ControllerSession",
+    "connect_host",
     "start_controller_session",
 ]
 
@@ -67,8 +68,8 @@ def start_controller_session(
     timeout: float = DEFAULT_ATTACH_TIMEOUT_S,
 ) -> ControllerSession:
     """Host the controller, or attach to one already serving the configured address."""
-    connect_host = _connect_host(config.controller.host)
-    base_url = f"http://{connect_host}:{config.controller.port}"
+    connect = connect_host(config.controller.host)
+    base_url = f"http://{connect}:{config.controller.port}"
 
     if config.controller.token is not None:
         attached = _try_attach(base_url, config.controller.token, timeout)
@@ -112,7 +113,7 @@ def start_controller_session(
             description=f"attached to controller at {base_url}",
         )
 
-    url = f"http://{connect_host}:{server.port}"
+    url = f"http://{connect}:{server.port}"
     description = f"hosting controller at {url}"
     if not durable:
         description += " (in-memory queue: clips will not survive a restart)"
@@ -148,8 +149,12 @@ def _try_attach(base_url: str, token: str, timeout: float) -> ControllerSession 
     )
 
 
-def _connect_host(host: str) -> str:
+def connect_host(host: str) -> str:
     """Use the loopback address to reach a wildcard bind."""
     if host in {"0.0.0.0", "::"}:
         return "127.0.0.1"
     return host
+
+
+#: Backward-compatible alias for the pre-#52 private name.
+_connect_host = connect_host

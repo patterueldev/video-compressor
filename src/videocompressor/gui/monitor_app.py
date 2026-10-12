@@ -19,6 +19,7 @@ from videocompressor.gui.controller_session import (
     ControllerBindError,
     start_controller_session,
 )
+from videocompressor.gui.local_worker import LocalWorkerSupervisor
 from videocompressor.gui.monitor_window import MonitorWindow
 
 __all__ = ["run"]
@@ -53,11 +54,17 @@ def run(*, config_path: Path | None = None, manifest_path: Path | None = None) -
         QMessageBox.warning(None, "Video Compressor", f"controller unavailable: {error}")
         return EXIT_CONTROLLER_ERROR
 
+    # The app runs a local worker by default (issue #52); a failure to start is
+    # not fatal — the Monitor tab's local-worker strip reports it.
+    supervisor = LocalWorkerSupervisor(config, resolved_config, client=session.client)
+    supervisor.ensure_started()
+
     window = MonitorWindow(
         config=config,
         config_path=resolved_config,
         manifest_path=manifest_path,
         session=session,
+        supervisor=supervisor,
     )
     window.show()
     try:

@@ -4,9 +4,10 @@ The window embeds the issue #8 :class:`MainWindow` unchanged as the Library tab,
 the issue #9 monitor as the Monitor tab, the issue #41 convert flow as the
 first tab, and the issue #54 nodes panel as the Nodes tab, so the direct
 conversion path is the default view. Closing stops the monitor poller, the nodes
-runner, and the hosted controller (an attached controller keeps running); the
-issue #8 scan guard is mirrored here because the embedded window no longer
-receives its own ``closeEvent``.
+runner, the local worker child (unless it keeps running), and the hosted
+controller (an attached controller keeps running); the issue #8 scan guard is
+mirrored here because the embedded window no longer receives its own
+``closeEvent``.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from PySide6.QtWidgets import QMainWindow, QMessageBox, QTabWidget, QWidget
 from videocompressor.core.config import AppConfig
 from videocompressor.gui.controller_session import ControllerSession
 from videocompressor.gui.convert_panel import ConvertPanel
+from videocompressor.gui.local_worker import LocalWorkerSupervisor
+from videocompressor.gui.local_worker_panel import LocalWorkerPanel
 from videocompressor.gui.main_window import MainWindow
 from videocompressor.gui.monitor_panel import MonitorPanel
 from videocompressor.gui.monitor_service import MonitorSession
@@ -46,11 +49,14 @@ class MonitorWindow(QMainWindow):
         panel: MonitorPanel | None = None,
         convert: ConvertPanel | None = None,
         nodes: NodesPanel | None = None,
+        supervisor: LocalWorkerSupervisor | None = None,
+        local_worker: QWidget | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Video Compressor")
         self.session = session
+        self.supervisor = supervisor
         self.library = (
             library
             if library is not None
@@ -61,12 +67,22 @@ class MonitorWindow(QMainWindow):
                 parent=self,
             )
         )
+        self.local_worker = (
+            local_worker
+            if local_worker is not None
+            else (
+                LocalWorkerPanel(supervisor, config, config_path, parent=self)
+                if supervisor is not None
+                else None
+            )
+        )
         self.monitor = (
             panel
             if panel is not None
             else MonitorPanel(
                 MonitorSession(session.client),
                 description=session.description,
+                header=self.local_worker,
                 parent=self,
             )
         )
@@ -93,6 +109,11 @@ class MonitorWindow(QMainWindow):
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.convert.enqueued.connect(self._on_enqueued)
         self.setCentralWidget(self.tabs)
+        if self.local_worker is not None:
+            self.monitor.runner.updated.connect(self.local_worker.apply_snapshot)
+            roots_panel = getattr(self.library, "roots_panel", None)
+            if roots_panel is not None:
+                roots_panel.roots_changed.connect(self.local_worker.on_roots_changed)
 
     # -- convert flow ------------------------------------------------------
 
@@ -121,6 +142,8 @@ class MonitorWindow(QMainWindow):
                 event.ignore()
                 return
         self.monitor.shutdown()
+        if self.supervisor is not None:
+            self.supervisor.shutdown()
         self.nodes.shutdown()
         self.session.close()
         event.accept()
