@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -298,10 +299,11 @@ class LocalWorkerSupervisor:
 
     def _start_child(self) -> LocalWorkerOutcome:
         config_path = self.worker_config_path()
+        # Inherit the app environment (PATH, HOME, ...) with the token overlaid;
+        # a token-only env left the child without PATH (issue #62).
+        env = {**os.environ, **self._token_env()}
         try:
-            process = self._spawn(
-                worker_command(config_path), self._token_env(), config_path.parent
-            )
+            process = self._spawn(worker_command(config_path), env, config_path.parent)
         except OSError as error:
             return self._settle(STATE_ERROR, f"cannot start the local worker: {error}")
         self._process = process
