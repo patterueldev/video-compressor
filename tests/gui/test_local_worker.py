@@ -6,6 +6,7 @@ Pure Python — runs without the optional PySide6 extra.
 from __future__ import annotations
 
 import json
+import os
 import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -113,6 +114,20 @@ def test_starts_a_child_with_the_generated_config(tmp_path):
     assert config_file.is_file()
     assert config_file.stat().st_mode & 0o777 == 0o600
     assert "test-token" not in config_file.read_text(encoding="utf-8")
+
+
+def test_spawned_child_inherits_the_app_environment_and_the_token_wins(tmp_path, monkeypatch):
+    config = make_config(tmp_path)
+    monkeypatch.setenv("VC_TEST_INHERITED", "from-parent")
+    monkeypatch.setenv(TOKEN_ENV_VAR, "inherited-token")
+    supervisor, spawner, *_ = supervisor_for(tmp_path, config)
+
+    supervisor.ensure_started()
+
+    env = spawner.calls[0][1]
+    assert env["VC_TEST_INHERITED"] == "from-parent"
+    assert env["PATH"] == os.environ["PATH"]
+    assert env[TOKEN_ENV_VAR] == "test-token"
 
 
 def test_ensure_started_is_idempotent_for_a_live_child(tmp_path):
