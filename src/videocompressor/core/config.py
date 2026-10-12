@@ -12,7 +12,8 @@ Legacy templates carried ``daytime_video_bitrate_kbps`` and
 save emits the new shape only.
 
 The GUI adds registered archive roots (issue #8) plus template create/duplicate/rename
-helpers; every helper validates its input before the caller writes the file.
+helpers; every helper validates its input before the caller writes the file. The Nodes
+tab (issue #54) adds ``[[nodes]]`` entries via ``core.nodes``.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from videocompressor.core.models import (
     OriginalHandling,
     TemplateSettings,
 )
+from videocompressor.core.nodes import NodeEntry, nodes_from_toml, nodes_to_toml
 
 _log = logging.getLogger("videocompressor.core")
 
@@ -84,6 +86,7 @@ class AppConfig:
         default_factory=lambda: {DEFAULT_TEMPLATE_NAME: TemplateSettings()}
     )
     roots: list[ArchiveRoot] = field(default_factory=list)
+    nodes: list[NodeEntry] = field(default_factory=list)
     controller: ControllerSettings = field(default_factory=ControllerSettings)
 
 
@@ -222,6 +225,8 @@ def _config_to_toml(config: AppConfig) -> dict[str, object]:
         document["roots"] = [
             {"id": root.id, "name": root.name, "path": str(root.path)} for root in config.roots
         ]
+    if config.nodes:
+        document["nodes"] = nodes_to_toml(config.nodes)
     document["controller"] = controller
     return document
 
@@ -267,6 +272,8 @@ def _config_from_toml(data: Mapping[str, object]) -> AppConfig:
             for entry in roots
             if isinstance(entry, Mapping) and {"id", "name", "path"} <= set(entry)
         ]
+
+    config.nodes = nodes_from_toml(data.get("nodes"))
 
     controller = data.get("controller")
     if isinstance(controller, Mapping):
