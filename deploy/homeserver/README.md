@@ -5,6 +5,11 @@ ffmpeg (with libx265), and the `video-compressor` package (no GUI extra). The wo
 with the controller running on the operator machine, claims one clip at a time, copies it to
 local scratch, encodes, validates, and replaces the source through the verified protocol.
 
+> Once the worker-fleet work lands (epic #50; end-to-end acceptance in #56), the app's Nodes
+> panel installs and manages a worker on this host over SSH, superseding the manual first-time
+> steps below. This document remains the container-based Linux alternative and reference; the
+> native path is in [docs/install-runbook.md](../../docs/install-runbook.md).
+
 Container paths used by the stack:
 
 | Purpose | Host path (from `.env`) | Container path | Mode |

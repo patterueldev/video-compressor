@@ -78,77 +78,26 @@ Stop semantics:
 
 ## Service mode (macOS launchd, Linux systemd)
 
-Install the worker as a per-user service that keeps running without a terminal. The service runs
-exactly the foreground command (`vc worker --config PATH`); the config file is the service's
-identity and must stay in place until the service is uninstalled.
+Install the worker as a per-user service that keeps running without a terminal:
 
 ```sh
-# Create (or refresh) the unit and start it; idempotent - an unchanged config is a no-op
-vc worker install-service --config /path/to/worker.toml
-
-# Report the state; exit code 0 also covers "not_installed"
-vc worker service-status --config /path/to/worker.toml
-vc worker service-status --config /path/to/worker.toml --json   # schema 1, for automation
-
-# Stop the service and remove the unit; safe to run twice ("absent")
-vc worker uninstall-service --config /path/to/worker.toml
+vc worker install-service --config /path/to/worker.toml    # create (or refresh) and start
+vc worker service-status --config /path/to/worker.toml     # report; --json for automation
+vc worker uninstall-service --config /path/to/worker.toml  # stop and remove
 ```
 
-Add `--dry-run` to `install-service` / `uninstall-service` to print the planned unit and commands
-without changing anything (token values are redacted). `service-status` exits `0` when the service
-is simply not installed; `1` means the platform command failed (or the platform is unsupported);
-`2` means the config or the flags are wrong.
-
-| | macOS (launchd) | Linux (systemd) |
-| --- | --- | --- |
-| Scope | per-user LaunchAgent | systemd user unit |
-| Unit | `~/Library/LaunchAgents/com.videocompressor.worker.<id>.plist` | `~/.config/systemd/user/videocompressor-worker-<id>.service` |
-| Logs | `~/Library/Logs/VideoCompressor/<id>.out.log` and `.err.log` | the journal: `journalctl --user -u videocompressor-worker-<id>.service` |
-| Restart | on failure, throttled to 30 s | `Restart=on-failure`, `RestartSec=30` |
-
-Notes:
-
-- The service runs as the logged-in user. On a headless Linux host run
-  `loginctl enable-linger <user>` once, or the unit stops with the session. macOS LaunchAgents
-  need a logged-in user session; headless macOS nodes (system scope) are a follow-up.
-- `install-service` validates the config fully (roots, scratch, token) before writing anything;
-  `service-status` and `uninstall-service` only read the worker id, so they still work when a
-  root is unmounted or the token environment variable is gone.
-- Relative paths in the config resolve against the config's own directory in service mode; use
-  absolute paths in `worker.toml`.
-- Configs that use `token_env`: the resolved value is materialized into the service environment
-  at install time (a 0600 `EnvironmentFile` on Linux, `EnvironmentVariables` in the 0600 plist on
-  macOS) and is never printed. Uninstall removes the Linux env file even if the config later
-  switched to an inline token. **Rotating the token requires re-running `install-service`.**
-- Reinstalling an identical unit on a running service performs no command; a changed unit is
-  rewritten and the service restarted. The launchd log files grow until macOS log rotation
-  handles them; the systemd journal is bounded by journald.
+Unit locations, logs, exit codes, `--dry-run`, the headless-host `loginctl enable-linger` note,
+and token materialization/rotation are in [install-runbook.md](install-runbook.md). The config
+file is the service's identity and must stay in place until the service is uninstalled.
 
 ## Remote bootstrap (`vc node`)
 
-With key-based SSH access, `vc node` installs and manages this worker from another machine
-without hand-editing anything on the node:
-
-```sh
-vc node probe --host node.example.com --user operator          # platform, Python, ffmpeg, disk, worker/service
-vc node install --host node.example.com --user operator \
-  --controller-url http://controller.example.com:8765 \
-  --token-env VC_WORKER_TOKEN \
-  --root archive=/path/to/archive \
-  --scratch-dir /path/to/scratch
-vc node status --host node.example.com
-vc node uninstall --host node.example.com                       # add --purge to remove the install dir
-```
-
-- Everything managed lives under `~/.videocompressor/` on the node (venv, staging, `worker.toml`
-  at mode 0600). The install ships a locally prepared wheelhouse, so the node needs no network
-  and no build toolchain; the token comes from `--token-env` or `--token-file` and never appears
-  in output. The node needs Python 3.12+ with venv/ensurepip and ffmpeg on `PATH`; no sudo is
-  used or required (the service itself is the per-user `vc worker install-service` from #51).
-- Host keys: `accept-new` by default (first contact is pinned, later changes fail); pass
-  `--strict-host-keys` to require a pre-seeded `known_hosts`. Auth is key-based only.
-- Uninstall stops the service and removes the worker config; `--purge` also removes
-  `~/.videocompressor/`. Root mappings, scratch content, and the archive are never deleted.
+With key-based SSH access, `vc node probe|install|status|uninstall` installs and manages this
+worker on another machine from the CLI; the app's Nodes panel drives the same backend. The
+command set, host requirements, host-key policy (`accept-new` default, `--strict-host-keys`
+opt-in), and uninstall semantics are in [install-runbook.md](install-runbook.md); the security
+stance is in [security-notes.md](security-notes.md). Everything managed lives under
+`~/.videocompressor/` on the node; no sudo is used or required.
 
 ## Stop, resume, and recovery
 
