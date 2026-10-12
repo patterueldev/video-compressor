@@ -49,6 +49,7 @@ from videocompressor.node.service import (
     uninstall_service,
 )
 from videocompressor.node.ssh import SshRunner
+from videocompressor.node.wheel import install_staged_wheel
 from videocompressor.worker.config import WORKER_ID_PATTERN
 
 __all__ = ["DEFAULT_INSTALL_DIR", "MINIMUM_PYTHON", "NodeBootstrap"]
@@ -156,14 +157,14 @@ class NodeBootstrap:
                 steps.append(StepReport("venv", detail=f"created {venv_dir}"))
 
             venv_python = str(PurePosixPath(venv_dir) / "bin" / "python")
-            pip_command = (
-                f"{shlex.quote(venv_python)} -m pip install --no-index"
-                f" --find-links {shlex.quote(staging)} --upgrade video-compressor"
+            detail = install_staged_wheel(
+                self.runner,
+                venv_python=venv_python,
+                staging=staging,
+                host_label=self.host.destination(),
+                timeout=STEP_TIMEOUT,
             )
-            self._require_ok(
-                self.runner.run(pip_command, timeout=STEP_TIMEOUT), "install the worker wheel"
-            )
-            steps.append(StepReport("install", detail="wheel installed from the staging dir"))
+            steps.append(StepReport("install", detail=detail))
 
             config_path = worker_config_path(install_dir)
             detail = push_worker_config(

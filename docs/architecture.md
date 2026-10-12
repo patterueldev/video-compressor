@@ -60,7 +60,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   install/status/uninstall; issue #51).
 - `node`: `models` (host/probe/spec/report types), `ssh` (OpenSSH runner seam), `probe`
   (read-only host report), `config` (worker TOML render/push), `service` (frozen #51 CLI
-  adapter), `distribution` (wheelhouse build/validate), `bootstrap` (`vc node` orchestrator;
+  adapter), `distribution` (wheelhouse build/validate), `wheel` (force-reinstall of the staged
+  wheel and the truthful install report; issue #67), `bootstrap` (`vc node` orchestrator;
   the #54 backend).
 - `cli`: `app` (parser + command registry), one module per subcommand (`probe`, `scan`,
   `worker`, `node`, `controller`, `gui`), `constants` (exit codes).
