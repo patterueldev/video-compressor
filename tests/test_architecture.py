@@ -31,8 +31,9 @@ ALLOWED_CROSS_PACKAGE = {
     "core": frozenset(),
     "controller": frozenset({"core"}),
     "worker": frozenset({"core"}),
-    "gui": frozenset({"core", "controller"}),
-    "cli": frozenset({"core", "controller", "worker", "gui"}),
+    "node": frozenset({"worker"}),
+    "gui": frozenset({"core", "controller", "node"}),
+    "cli": frozenset({"core", "controller", "worker", "gui", "node"}),
 }
 PACKAGES = frozenset(ALLOWED_CROSS_PACKAGE)
 
