@@ -99,6 +99,8 @@ def test_pass2_command_recipe():
         "96k",
         "-map_metadata",
         "0",
+        "-map_chapters",
+        "-1",
         "-tag:v",
         "hvc1",
         "-movflags",

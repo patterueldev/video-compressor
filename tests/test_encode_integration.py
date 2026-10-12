@@ -1,7 +1,11 @@
-"""Slow integration: synthetic clip through the real two-pass recipe and validation (issue #4)."""
+"""Slow integration: synthetic clips through the real two-pass recipe and validation.
+
+Covers the plain recipe (issue #4) and the chapter-track regression (issue #66).
+"""
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -74,6 +78,64 @@ def synthetic_source(tmp_path_factory) -> Path:
     return path
 
 
+CHAPTER_METADATA = """\
+;FFMETADATA1
+[CHAPTER]
+TIMEBASE=1/1000
+START=1000
+END=3000
+title=chapter one
+"""
+
+
+def ffprobe_chapters(path: Path) -> list[dict[str, object]]:
+    """Chapter entries ffprobe reports for ``path``; empty when it has none."""
+    completed = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_chapters", "-of", "json", str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout).get("chapters", [])
+
+
+@pytest.fixture(scope="module")
+def chaptered_source(synthetic_source: Path, tmp_path_factory) -> Path:
+    """The synthetic clip plus one QuickTime chapter track written from ffmpeg metadata."""
+    workdir = tmp_path_factory.mktemp("chaptered")
+    metadata = workdir / "chapters.txt"
+    metadata.write_text(CHAPTER_METADATA, encoding="utf-8")
+    path = workdir / "chaptered.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(synthetic_source),
+            "-i",
+            str(metadata),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "1",
+            "-map_chapters",
+            "1",
+            "-c",
+            "copy",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    assert ffprobe_chapters(path), "chaptered fixture lost its chapter track"
+    return path
+
+
 def test_two_pass_recipe_produces_a_valid_output(synthetic_source: Path, tmp_path: Path):
     settings = EncodeSettings(ffmpeg_preset="veryfast")
     source_facts = probe_media_facts(synthetic_source)
@@ -125,3 +187,25 @@ def test_output_with_the_wrong_height_fails_validation(synthetic_source: Path, t
     validation = validate_output(result.output_path, EncodeSettings(), source=source_facts)
     assert not validation.ok
     assert any(failure.startswith("height:") for failure in validation.failures)
+
+
+def test_chaptered_source_encodes_without_chapters(chaptered_source: Path, tmp_path: Path):
+    settings = EncodeSettings(ffmpeg_preset="veryfast")
+    source_facts = probe_media_facts(chaptered_source)
+
+    result = run_two_pass_encode(
+        chaptered_source,
+        tmp_path / "chaptered-out.mp4",
+        settings,
+        duration_s=source_facts.duration_s,
+        passlog_prefix=tmp_path / "passlog.x265",
+    )
+
+    validation = validate_output(result.output_path, settings, source=source_facts)
+    assert validation.ok, validation.failures
+
+    # The encode drops chapters (issue #66): no chapter entries and no text
+    # chapter track in the output, so the strict decode check stays quiet.
+    output_facts = probe_media_facts(result.output_path)
+    assert ffprobe_chapters(result.output_path) == []
+    assert "text" not in output_facts.stream_codec_tags
