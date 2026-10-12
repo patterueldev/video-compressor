@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from videocompressor import __version__
-from videocompressor.cli import controller, gui, probe, scan, worker
+from videocompressor.cli import controller, gui, node, probe, scan, worker
 from videocompressor.cli.constants import EXIT_NOT_IMPLEMENTED
 
 
@@ -30,7 +30,7 @@ class CommandModule(Protocol):
 
 
 #: Single command registry; order drives ``vc --help``.
-COMMANDS: tuple[CommandModule, ...] = (probe, scan, worker, controller, gui)
+COMMANDS: tuple[CommandModule, ...] = (probe, scan, worker, node, controller, gui)
 
 _COMMANDS_BY_NAME = {command.NAME: command for command in COMMANDS}
 
