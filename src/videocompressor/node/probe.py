@@ -24,7 +24,8 @@ PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 expand() {
     case "$1" in
         "~") printf '%s' "$HOME" ;;
-        "~/"*) printf '%s' "$HOME/${1#~/}" ;;
+        # the escaped tilde keeps the pattern literal (a bare ~ is tilde-expanded)
+        "~/"*) printf '%s' "$HOME/${1#\\~/}" ;;
         *) printf '%s' "$1" ;;
     esac
 }

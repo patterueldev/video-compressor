@@ -2,11 +2,38 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from fixtures.node import INSTALL_DIR, SCRATCH_DIR, FakeSshRunner, probe_output
-from videocompressor.node.models import ProbeError
+from videocompressor.node.models import CommandResult, ProbeError
 from videocompressor.node.probe import parse_probe_output, probe_node
+
+
+class LocalShellRunner:
+    """Runs the probe command through the local POSIX shell (offline, no SSH).
+
+    The probe script is shell code, so the only honest regression test for its
+    tilde expansion executes the real command text with a controlled ``HOME``.
+    """
+
+    def __init__(self, home: Path) -> None:
+        self.home = home
+
+    def run(self, command: str, *, timeout: float = 30.0) -> CommandResult:
+        completed = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "HOME": str(self.home)},
+            timeout=timeout,
+        )
+        return CommandResult(command, completed.returncode, completed.stdout, completed.stderr)
 
 
 def test_parse_ignores_noise_and_values_with_equals() -> None:
@@ -36,6 +63,28 @@ def test_probe_assembles_fields() -> None:
     command = runner.commands[0]
     assert f"VC_INSTALL_DIR={INSTALL_DIR}" in command
     assert f"VC_SCRATCH_DIR={SCRATCH_DIR}" in command
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="a POSIX shell is required")
+@pytest.mark.parametrize(
+    ("install_dir", "suffix"),
+    [
+        ("~", ""),
+        ("~/scratch", "/scratch"),
+        ("~/.videocompressor", "/.videocompressor"),
+    ],
+)
+def test_probe_shell_expands_tilde_install_dirs(
+    tmp_path: Path, install_dir: str, suffix: str
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+
+    probe = probe_node(LocalShellRunner(home), install_dir=install_dir)
+
+    assert probe.home == str(home)
+    assert probe.install_dir == f"{home}{suffix}"
+    assert "~" not in probe.install_dir
 
 
 def test_probe_without_python_or_ffmpeg() -> None:
