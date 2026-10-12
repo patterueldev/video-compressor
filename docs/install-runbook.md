@@ -178,6 +178,10 @@ accepts `--install-dir` (default `~/.videocompressor`) and `--json`.
 - `install` accepts `--worker-id` (default: the remote hostname), `--name`, `--thread-cap`
   (default 2), `--python`, and `--wheelhouse`; repeat `--root ID=PATH` for every controller
   root the node resolves.
+- Re-running `install` on an existing node force-reinstalls the staged wheel even when its
+  version is unchanged, so the remote code always matches the wheelhouse; the `install` step
+  reports `unchanged` only when pip installed nothing. A `--wheelhouse` used for an update must
+  also contain the project's dependency wheels (the default, building one, does).
 - Uninstall stops the service and removes the worker config; `--purge` also removes
   `~/.videocompressor/`. Root mappings, scratch content, and the archive are never deleted.
 

@@ -112,9 +112,40 @@ def test_install_reuses_an_existing_venv(tmp_path: Path) -> None:
     report = _bootstrap(runner, tmp_path).install(_spec())
     assert report.ok is True
     assert not runner.commands_with("-m venv")
-    assert runner.commands_with("--upgrade")
+    pip_commands = runner.commands_with("pip install")
+    assert pip_commands and "--force-reinstall" in pip_commands[-1]
+    assert not runner.commands_with("--upgrade")
     venv_step = next(step for step in report.steps if step.step == "venv")
     assert "reused" in venv_step.detail
+
+
+def test_install_step_reports_the_reinstalled_wheel(tmp_path: Path) -> None:
+    runner = FakeSshRunner(
+        probe=probe_output(venv_present="yes", config_present="yes", worker_version="vc 0.1.0")
+    ).on(
+        "pip install",
+        lambda command: CommandResult(
+            command, 0, "Successfully installed tomli-w-1.2.0 video-compressor-0.1.0\n", ""
+        ),
+    )
+    report = _bootstrap(runner, tmp_path).install(_spec())
+    step = next(step for step in report.steps if step.step == "install")
+    assert step.ok is True
+    assert step.detail == "installed video-compressor-0.1.0"
+
+
+def test_install_step_says_unchanged_when_pip_installs_nothing(tmp_path: Path) -> None:
+    runner = FakeSshRunner(
+        probe=probe_output(venv_present="yes", config_present="yes", worker_version="vc 0.1.0")
+    ).on(
+        "pip install",
+        lambda command: CommandResult(
+            command, 0, "Requirement already satisfied: video-compressor in venv (0.1.0)\n", ""
+        ),
+    )
+    report = _bootstrap(runner, tmp_path).install(_spec())
+    step = next(step for step in report.steps if step.step == "install")
+    assert step.detail == "unchanged"
 
 
 def test_install_backs_up_a_differing_config(tmp_path: Path) -> None:
