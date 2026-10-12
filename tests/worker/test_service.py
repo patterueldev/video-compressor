@@ -32,7 +32,7 @@ from videocompressor.worker.service import (
     spec_from_config,
     uninstall_service,
 )
-from videocompressor.worker.units import env_file_path, render_unit, unit_path
+from videocompressor.worker.units import env_file_path, render_systemd_unit, render_unit, unit_path
 from worker.service_support import (
     COMMAND,
     TOKEN,
@@ -371,6 +371,26 @@ def test_default_worker_command_runs_the_cli_module() -> None:
     assert Path(command[0]).is_absolute()
     assert command[1:5] == ("-m", "videocompressor.cli", "worker", "--config")
     assert command[-1] == "/abs/worker.toml"
+
+
+def test_default_worker_command_keeps_a_symlinked_venv_interpreter(
+    tmp_path: Path, paths_for, monkeypatch
+) -> None:
+    base = tmp_path / "base-python"
+    base.write_text("#!/bin/sh\n", encoding="utf-8")
+    base.chmod(0o755)
+    venv_python = tmp_path / "venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(base)
+    monkeypatch.setattr("videocompressor.worker.service.sys.executable", str(venv_python))
+
+    command = default_worker_command(tmp_path / "worker.toml")
+
+    assert command[0] == str(venv_python)
+    spec = make_spec(tmp_path / "worker.toml", command=command)
+    document = render_systemd_unit(spec, paths_for("linux"))
+    assert str(venv_python) in document
+    assert str(base) not in document  # the venv symlink must not be resolved
 
 
 def test_spec_from_config_materializes_an_env_token(tmp_path: Path, monkeypatch) -> None:

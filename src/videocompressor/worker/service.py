@@ -133,9 +133,14 @@ class ServiceSpec:
 
 
 def default_worker_command(config_path: Path) -> tuple[str, ...]:
-    """Absolute argv the service runs: this interpreter, the CLI module, the config."""
+    """Absolute argv the service runs: this interpreter, the CLI module, the config.
+
+    ``sys.executable`` is used unresolved on purpose: resolving a venv's python
+    symlink escapes the environment, so the unit could no longer import the
+    package installed in the venv. #52's ``worker_command`` follows the same rule.
+    """
     return (
-        str(Path(sys.executable).resolve()),
+        sys.executable,
         "-m",
         "videocompressor.cli",
         "worker",
