@@ -83,6 +83,19 @@ class DestinationKind(StrEnum):
     OUTPUT_ROOT = "output_root"
 
 
+class StopMode(StrEnum):
+    """How an operator stop request should be carried out (issue #74).
+
+    ``cancel`` stops now: the active job is cancelled and requeued, and the
+    node exits. ``drain`` stops after the current clip: the active job settles
+    normally, the node exits without claiming again, and an idle node exits
+    immediately. A missing or null mode means ``cancel`` (old controllers).
+    """
+
+    CANCEL = "cancel"
+    DRAIN = "drain"
+
+
 def is_safe_relative_path(value: str, *, allow_empty: bool = False) -> bool:
     """Whether ``value`` is a safe relative POSIX path (no escapes or backslashes)."""
     if not value:

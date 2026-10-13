@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from videocompressor.controller.store import EventRow, RunRow
+from videocompressor.core.models import StopMode
 
 __all__ = ["ControllerError"]
 
@@ -76,6 +77,19 @@ def _optional_str_map(payload: Mapping[str, Any], key: str) -> dict[str, str]:
             raise ControllerError(400, "bad_request", f"{key!r} must map strings to strings")
         out[map_key] = map_value
     return out
+
+
+def _stop_mode(payload: Mapping[str, Any]) -> StopMode:
+    """Parsed ``mode`` for a worker stop request (default ``cancel``)."""
+    value = payload.get("mode", StopMode.CANCEL.value)
+    if not isinstance(value, str):
+        raise ControllerError(400, "bad_request", "'mode' must be 'cancel' or 'drain'")
+    try:
+        return StopMode(value)
+    except ValueError:
+        raise ControllerError(
+            400, "bad_request", "'mode' must be 'cancel' or 'drain'"
+        ) from None
 
 
 def _settings_hash(settings: Mapping[str, Any]) -> str:

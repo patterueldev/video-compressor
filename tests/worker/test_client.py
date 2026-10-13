@@ -34,7 +34,7 @@ def test_register_heartbeat_claim_complete_round_trip(server, seed_clip, manifes
     client = ControllerClient(server.base_url, TOKEN)
 
     assert register(client) == {"lease_seconds": 90, "heartbeat_seconds": 15}
-    assert client.heartbeat("node-a") == {"stop": False, "lease_seconds": 90}
+    assert client.heartbeat("node-a") == {"stop": False, "stop_mode": None, "lease_seconds": 90}
 
     job = client.claim("node-a")
     assert isinstance(job, ClaimedJob)

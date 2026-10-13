@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from videocompressor.controller.constants import LEASE_TTL_SECONDS
-from videocompressor.core.models import JobState
+from videocompressor.core.models import JobState, StopMode
 
 CLIP = "2024-06-Ride/GS010001.MP4"
 
@@ -97,3 +97,29 @@ def test_heartbeat_within_renewed_lease_keeps_job(server, api, clock, seed_clip,
 
     assert manifest.list_clips()[0].state is JobState.CLAIMED
     assert _messages(store, "lease expired") == []
+
+
+def test_sweep_keeps_an_idle_stop_for_an_online_worker(server, api, store):
+    api.register("a")
+    assert api.post("/workers/a/stop", {"mode": "drain"})[0] == 204
+
+    server.sweep_once()  # the node is online, so the request must survive
+
+    row = store.get_worker("a")
+    assert row is not None and row.stop_requested is True
+    assert row.stop_mode is StopMode.DRAIN
+    status, heartbeat = api.post("/workers/a/heartbeat", {})
+    assert heartbeat["stop"] is True and heartbeat["stop_mode"] == "drain"
+
+
+def test_sweep_clears_a_stop_for_an_offline_worker(server, api, clock, store):
+    api.register("a")
+    assert api.post("/workers/a/stop")[0] == 204
+
+    clock.advance(LEASE_TTL_SECONDS + 1)
+    server.sweep_once()
+
+    row = store.get_worker("a")
+    assert row is not None
+    assert row.stop_requested is False
+    assert row.stop_mode is None

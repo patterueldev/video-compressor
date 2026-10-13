@@ -28,7 +28,7 @@ def test_register_and_heartbeat_round_trip(api):
     assert body == {"lease_seconds": 90, "heartbeat_seconds": 15}
     status, heartbeat = api.post("/workers/homeserver/heartbeat", {})
     assert status == 200
-    assert heartbeat == {"stop": False, "lease_seconds": 90}
+    assert heartbeat == {"stop": False, "stop_mode": None, "lease_seconds": 90}
     status, workers = api.get("/workers")
     assert status == 200
     entry = workers["workers"][0]
@@ -38,6 +38,7 @@ def test_register_and_heartbeat_round_trip(api):
     assert entry["roots"] == {"archive": "/srv/archive"}
     assert entry["active"] is None
     assert entry["stop_requested"] is False
+    assert entry["stop_mode"] is None
 
 
 def test_heartbeat_unknown_worker_404(api):

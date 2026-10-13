@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from videocompressor.controller.store import ControllerStore
+from videocompressor.core.models import StopMode
 
 
 def test_worker_registry_round_trip(store, clock):
@@ -30,12 +33,73 @@ def test_worker_registry_round_trip(store, clock):
 
 def test_reregister_refreshes_and_clears_stop_flag(store, clock):
     store.upsert_worker("a", name="old")
-    store.set_stop_requested("a", True)
+    store.set_stop_requested("a", True, mode=StopMode.DRAIN)
     clock.advance(10)
     row = store.upsert_worker("a", name="new", version="0.2.0")
     assert row.name == "new"
     assert row.stop_requested is False
+    assert row.stop_mode is None
     assert row.last_seen == clock()
+
+
+def test_stop_mode_round_trip_and_clear(store):
+    store.upsert_worker("a")
+    row = store.set_stop_requested("a", True, mode=StopMode.DRAIN)
+    assert row is not None
+    assert row.stop_requested is True
+    assert row.stop_mode is StopMode.DRAIN
+
+    row = store.set_stop_requested("a", True, mode=StopMode.CANCEL)
+    assert row is not None and row.stop_mode is StopMode.CANCEL
+
+    row = store.set_stop_requested("a", False)
+    assert row is not None
+    assert row.stop_requested is False
+    assert row.stop_mode is None
+
+    # a stop without an explicit mode defaults to cancel
+    row = store.set_stop_requested("a", True)
+    assert row is not None and row.stop_mode is StopMode.CANCEL
+
+
+def test_legacy_database_migrates_the_stop_mode_column(tmp_path, clock):
+    path = tmp_path / "legacy.sqlite"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE workers (
+            worker_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            roots_json TEXT NOT NULL,
+            scratch_dir TEXT,
+            thread_cap INTEGER NOT NULL,
+            version TEXT,
+            last_seen TEXT,
+            stop_requested INTEGER NOT NULL DEFAULT 0,
+            registered_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO workers (worker_id, name, roots_json, scratch_dir, thread_cap, version,"
+        " last_seen, stop_requested, registered_at)"
+        " VALUES ('legacy', 'legacy', '{}', NULL, 2, NULL, NULL, 1, ?)",
+        (clock().isoformat(),),
+    )
+    conn.commit()
+    conn.close()
+
+    store = ControllerStore.open(path, clock=clock)
+    try:
+        row = store.get_worker("legacy")
+        assert row is not None
+        assert row.stop_requested is True
+        assert row.stop_mode is None  # pre-#74 rows normalize to cancel on read
+
+        updated = store.set_stop_requested("legacy", True, mode=StopMode.DRAIN)
+        assert updated is not None and updated.stop_mode is StopMode.DRAIN
+    finally:
+        store.close()
 
 
 def test_touch_and_stop_unknown_worker(store):
