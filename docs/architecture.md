@@ -51,7 +51,10 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   `convert_service`; issue #41), the Nodes panel (`nodes_panel`, `nodes_dialog`,
   `nodes_tables`, `nodes_runner`, `nodes_service`; issue #54), and the app-managed local
   worker (`local_worker` supervisor, `local_worker_config` generation,
-  `local_worker_service` subprocess seams, plus the `local_worker_panel` strip; issue #52).
+  `local_worker_service` subprocess seams, plus the `local_worker_panel` strip; issue #52),
+  with the issue #70 additions `local_worker_marker` (stop-state persistence),
+  `local_worker_processes` (process-table stale-child sweep), and `shutdown_signals`
+  (SIGTERM/SIGINT quit).
 - `worker`: `agent` (register/heartbeat/claim loop and stop), `client` (controller HTTP v1),
   `outcome` (per-job result type), `pipeline` (per-job copy → encode → validate → replace),
   `destination` (destination decode/resolve/place/delete), `transfer` (pilot delivery and
@@ -91,7 +94,13 @@ file. Startup is idempotent: an online worker with the same id (or the same root
 adopted, and a registration row whose last heartbeat predates a confirmed app stop is treated as
 dead instead of blocking the default flow. Closing the app terminates the child (the active clip
 requeues) unless keep-running leaves the service up; the local node appears in the Monitor like
-any other node.
+any other node. Before spawning the child the supervisor also sweeps the process side (issue
+#70): processes still running the generated `local-worker.toml` are terminated (SIGTERM, then
+SIGKILL), so a child orphaned by a signalled quit or a crash can never keep claiming with stale
+code or collide with the new child's startup scratch sweep; a confirmed sweep records the stop in
+the marker, so the orphan's registry row does not block the restart, and standalone workers
+(other config paths) are never touched. A best-effort SIGTERM/SIGINT handler stops the child
+cleanly before the app exits (`gui/shutdown_signals.py`).
 
 ### Test layout
 

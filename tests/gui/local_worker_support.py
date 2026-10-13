@@ -7,17 +7,21 @@ running without the optional ``gui`` extra.
 from __future__ import annotations
 
 import json
+import signal
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from videocompressor.core.config import AppConfig, register_root
+from videocompressor.gui.local_worker_processes import ProcessInfo
 from videocompressor.gui.local_worker_service import ServiceCommandResult
 
 __all__ = [
+    "FakeClock",
     "FakeProcess",
+    "FakeProcessTable",
     "FakeRegistry",
     "FakeServiceRunner",
     "FakeSpawner",
@@ -141,15 +145,68 @@ class StubbornProcess(FakeProcess):
 class FakeSpawner:
     """Records spawn argv/env/log dir and returns the configured process."""
 
-    def __init__(self, process: FakeProcess | None = None) -> None:
+    def __init__(
+        self, process: FakeProcess | None = None, *, events: list[str] | None = None
+    ) -> None:
         self.process = process if process is not None else FakeProcess()
         self.calls: list[tuple[tuple[str, ...], dict[str, str], Path]] = []
+        self.events = events if events is not None else []
 
     def __call__(
         self, argv: Sequence[str], env: Mapping[str, str], log_dir: Path
     ) -> FakeProcess:
         self.calls.append((tuple(argv), dict(env), Path(log_dir)))
+        self.events.append("spawn")
         return self.process
+
+
+class FakeProcessTable:
+    """A signal-free process table for the stale-sweep suites (issue #70).
+
+    ``ignore_term`` PIDs survive SIGTERM (SIGKILL removes them); ``ignore_all``
+    PIDs survive every signal. Every call is recorded in ``signals`` and, when
+    shared, appended to ``events`` so tests can assert ordering against
+    :class:`FakeSpawner`.
+    """
+
+    def __init__(
+        self,
+        processes: Sequence[tuple[int, str]] = (),
+        *,
+        ignore_term: Collection[int] = (),
+        ignore_all: Collection[int] = (),
+        events: list[str] | None = None,
+    ) -> None:
+        self._rows = dict(processes)
+        self.ignore_term = set(ignore_term)
+        self.ignore_all = set(ignore_all)
+        self.signals: list[tuple[int, int]] = []
+        self.events = events if events is not None else []
+
+    def list_processes(self) -> tuple[ProcessInfo, ...]:
+        return tuple(ProcessInfo(pid, command) for pid, command in sorted(self._rows.items()))
+
+    def signal(self, pid: int, signum: int) -> None:
+        self.signals.append((pid, signum))
+        self.events.append(f"signal:{pid}:{signum}")
+        if pid in self.ignore_all:
+            return
+        if pid in self.ignore_term and signum != signal.SIGKILL:
+            return
+        self._rows.pop(pid, None)
+
+
+class FakeClock:
+    """A monotonic clock whose ``sleep`` advances it; keeps sweep tests instant."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
 
 
 class FakeServiceRunner:

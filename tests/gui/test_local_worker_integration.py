@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from fixtures.controller import TOKEN
-from gui.local_worker_support import make_config
+from gui.local_worker_support import FakeProcessTable, make_config
 from videocompressor.gui.local_worker import (
     STATE_STARTED_CHILD,
     STATE_STOPPED,
@@ -44,7 +44,11 @@ def test_supervisor_starts_a_real_worker_and_stops_it(server, tmp_path: Path):
         return process
 
     supervisor = LocalWorkerSupervisor(
-        config, tmp_path / "config.toml", client=client, spawn=recording_spawn
+        config,
+        tmp_path / "config.toml",
+        client=client,
+        spawn=recording_spawn,
+        processes=FakeProcessTable(),  # hermetic: never enumerate real processes
     )
     try:
         outcome = supervisor.ensure_started()
