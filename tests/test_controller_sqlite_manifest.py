@@ -270,3 +270,41 @@ def test_custom_lease_ttl_drives_claim_and_heartbeat(tmp_path, clock, monkeypatc
         assert record is not None and record.state is JobState.QUEUED
     finally:
         manifest.close()
+
+
+def test_claim_is_root_aware_on_the_sqlite_manifest(sqlite_controller, make_api, clock):
+    manifest, controller = sqlite_controller
+    api = make_api(controller, token=TOKEN)
+    api.register("node-a", roots={"archive": "/mnt/archive"})
+    api.register("node-b", roots={"folders": "/srv/folders"})
+
+    def seed(root_id: str, relative_path: str) -> None:
+        manifest.upsert_clip(
+            ClipRecord(
+                root_id=root_id,
+                relative_path=relative_path,
+                source=Fingerprint(size_bytes=4096, mtime_ns=1, digest="source-digest"),
+                created_at=clock(),
+                updated_at=clock(),
+            )
+        )
+
+    seed("folders", "folder.MP4")  # oldest, but node-a does not map it
+    clock.advance(1)
+    seed("archive", CLIP)
+    clock.advance(1)
+    seed("camera", "orphan.MP4")  # no registered worker maps it
+
+    status, body = api.post("/jobs/claim", {"worker_id": "node-a"})
+    assert status == 200
+    assert body["job"]["root_id"] == "archive" and body["job"]["relative_path"] == CLIP
+
+    status, body = api.post("/jobs/claim", {"worker_id": "node-b"})
+    assert status == 200
+    assert body["job"]["root_id"] == "folders"
+    assert body["job"]["relative_path"] == "folder.MP4"
+
+    orphan = manifest.get_clip("camera", "orphan.MP4")
+    assert orphan is not None and orphan.state is JobState.QUEUED
+    assert api.post("/jobs/claim", {"worker_id": "node-a"}) == (204, None)
+    assert api.post("/jobs/claim", {"worker_id": "node-b"}) == (204, None)

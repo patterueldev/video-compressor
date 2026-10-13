@@ -22,6 +22,7 @@ from videocompressor.core.manifest_schema import (
     UPDATE_CLIP_SQL,
     UPSERT_CLIP_SQL,
     capture_to_json,
+    claim_sql,
     destination_to_json,
     from_iso,
     migrate,
@@ -203,20 +204,19 @@ class Manifest:
             ).fetchall()
         return [row_to_record(row) for row in rows]
 
-    def claim_next(self, worker_id: str) -> ClipRecord | None:
+    def claim_next(self, worker_id: str, roots: frozenset[str] | None = None) -> ClipRecord | None:
         """Transactionally claim the next queued clip for ``worker_id``.
 
-        Returns ``None`` when nothing is claimable. A clip must never be claimable
-        by two workers at once (issue #7 race requirement).
+        ``roots`` restricts the claim to roots the worker maps (issue #83): an
+        unmapped clip stays queued and an empty set claims nothing; ``None``
+        keeps the unfiltered behavior of direct callers. A clip must never be
+        claimable by two workers at once (issue #7 race requirement).
         """
         now = _utcnow()
         claimed_key: tuple[str, str] | None = None
         with self._transaction() as cursor:
-            row = cursor.execute(
-                "SELECT root_id, relative_path FROM clips WHERE state = ? "
-                "ORDER BY created_at, relative_path LIMIT 1",
-                (str(JobState.QUEUED),),
-            ).fetchone()
+            query, params = claim_sql(roots)
+            row = cursor.execute(query, params).fetchone()
             if row is not None:
                 cursor.execute(
                     "UPDATE clips SET state = ?, worker_id = ?, lease_expires_at = ?, "

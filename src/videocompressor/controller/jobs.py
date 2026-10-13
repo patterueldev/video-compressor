@@ -59,11 +59,12 @@ class JobDispatchMixin:
     def claim(self, worker_id: str) -> dict[str, Any] | None:
         """Claim the next queued clip; None when nothing is available."""
         with self._lock:
-            if self.store.get_worker(worker_id) is None:
+            worker = self.store.get_worker(worker_id)
+            if worker is None:
                 raise _unknown_worker(worker_id)
             self.store.touch_worker(worker_id)
             self._mark_online(worker_id)
-            record = self.manifest.claim_next(worker_id)
+            record = self.manifest.claim_next(worker_id, roots=frozenset(worker.roots))
             if record is None:
                 return None
             template_id, template = self._template_for(record)

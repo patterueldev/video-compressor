@@ -74,11 +74,19 @@ class MemoryManifest(Manifest):
             return records
         return [record for record in records if record.state is state]
 
-    def claim_next(self, worker_id: str) -> ClipRecord | None:
-        """Transactionally claim the next queued clip for ``worker_id``."""
+    def claim_next(
+        self, worker_id: str, roots: frozenset[str] | None = None
+    ) -> ClipRecord | None:
+        """Transactionally claim the next queued clip for ``worker_id``.
+
+        ``roots`` restricts the claim to those roots (issue #83); ``None``
+        keeps the unfiltered behavior and an empty set claims nothing.
+        """
         with self._lock:
             for key, record in self._records.items():
                 if record.state is not JobState.QUEUED:
+                    continue
+                if roots is not None and record.root_id not in roots:
                     continue
                 now = self._clock()
                 claimed = replace(

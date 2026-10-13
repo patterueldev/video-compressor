@@ -355,8 +355,13 @@ holds is rejected with `409` (the worker must abort and discard its local work).
 #### `POST /api/v1/jobs/claim`
 
 Claim the next queued clip for a worker. `204` when nothing is available. Claiming is
-transactional: two workers racing can never both win one clip. The controller fills the template's
-effective settings into the job; every clip carries the same video bitrate.
+transactional: two workers racing can never both win one clip. The claim is root-aware
+(issue #83): the controller filters the queue with the claiming worker's registered `roots`
+mapping, so a worker only receives a clip whose root it maps. A clip no registered worker maps
+stays queued — it is never handed out or failed by the claim path — and a worker that registered
+no mappings claims nothing. A re-registration changes the filter with the stored mappings. The
+controller fills the template's effective settings into the job; every clip carries the same
+video bitrate.
 
 ```json
 // request

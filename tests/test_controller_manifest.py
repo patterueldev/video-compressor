@@ -28,6 +28,21 @@ def test_claim_next_skips_non_queued(manifest, seed_clip):
     assert manifest.claim_next("w") is None
 
 
+def test_claim_next_filters_by_roots(manifest, seed_clip):
+    seed_clip("archive.MP4", root_id="archive")
+    seed_clip("camera.MP4", root_id="camera")
+
+    assert manifest.claim_next("w1", roots=frozenset()) is None
+    claimed = manifest.claim_next("w2", roots=frozenset({"camera"}))
+    assert claimed is not None and claimed.relative_path == "camera.MP4"
+    assert claimed.worker_id == "w2"
+    archive = manifest.get_clip("archive", "archive.MP4")
+    assert archive is not None and archive.state is JobState.QUEUED
+    assert archive.worker_id is None
+    assert manifest.claim_next("w3", roots=frozenset({"archive"})) is not None
+    assert manifest.claim_next("w4", roots=frozenset({"archive", "camera"})) is None
+
+
 def test_heartbeat_renews_lease(manifest, seed_clip, clock):
     seed_clip("a.MP4")
     manifest.claim_next("w1")  # lease until t+90
