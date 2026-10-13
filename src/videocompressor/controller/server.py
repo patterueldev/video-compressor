@@ -77,10 +77,11 @@ def open_manifest(
 
     The SQLite manifest (issue #3) is preferred; the in-memory double keeps
     ``vc controller`` usable (with a warning) if the manifest is unavailable.
+    ``lease_ttl_seconds`` becomes the manifest's job-lease TTL (issue #75).
     Returns ``(manifest, durable)``.
     """
     try:
-        return Manifest.open(db_path), True
+        return Manifest.open(db_path, lease_ttl_seconds=lease_ttl_seconds), True
     except NotImplementedError:
         return MemoryManifest.open(db_path, clock=clock, lease_ttl_seconds=lease_ttl_seconds), False
 

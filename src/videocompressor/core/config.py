@@ -54,6 +54,7 @@ MANIFEST_FILENAME = "manifest.sqlite"
 
 DEFAULT_CONTROLLER_HOST = "127.0.0.1"
 DEFAULT_CONTROLLER_PORT = 8765
+DEFAULT_ORPHAN_GRACE_SECONDS = 300
 
 
 def default_config_path() -> Path:
@@ -75,11 +76,12 @@ class CaptureTimeSettings:
 
 @dataclass
 class ControllerSettings:
-    """Local controller bind address and bearer token (issue #7)."""
+    """Local controller bind address, bearer token, and orphan grace (issues #7, #75)."""
 
     host: str = DEFAULT_CONTROLLER_HOST
     port: int = DEFAULT_CONTROLLER_PORT
     token: str | None = None
+    orphan_grace_seconds: int = DEFAULT_ORPHAN_GRACE_SECONDS
 
 
 @dataclass
@@ -248,6 +250,7 @@ def _config_to_toml(config: AppConfig) -> dict[str, object]:
     controller: dict[str, object] = {
         "host": config.controller.host,
         "port": config.controller.port,
+        "orphan_grace_seconds": config.controller.orphan_grace_seconds,
     }
     if config.controller.token is not None:
         controller["token"] = config.controller.token
@@ -326,6 +329,9 @@ def _config_from_toml(data: Mapping[str, object]) -> AppConfig:
         config.controller.port = int(controller.get("port", config.controller.port))
         token = controller.get("token")
         config.controller.token = str(token) if token is not None else None
+        grace = controller.get("orphan_grace_seconds")
+        if isinstance(grace, int) and not isinstance(grace, bool) and grace > 0:
+            config.controller.orphan_grace_seconds = grace
 
     local_worker = data.get("local_worker")
     if isinstance(local_worker, Mapping):

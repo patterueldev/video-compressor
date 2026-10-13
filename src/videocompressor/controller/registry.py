@@ -17,6 +17,7 @@ from typing import Any
 from videocompressor.controller.constants import (
     HEARTBEAT_INTERVAL_SECONDS,
     LEASE_STATES,
+    ONLINE_WINDOW_SECONDS,
     WORKER_ID_PATTERN,
 )
 from videocompressor.controller.protocol import (
@@ -180,7 +181,8 @@ class WorkerRegistryMixin:
     def _is_online(self, row: WorkerRow, now: datetime) -> bool:
         if row.last_seen is None:
             return False
-        return (now - row.last_seen).total_seconds() <= self.lease_ttl_seconds
+        window = min(self.lease_ttl_seconds, ONLINE_WINDOW_SECONDS)
+        return (now - row.last_seen).total_seconds() <= window
 
     def _ack_stop_without_report(self, worker_id: str) -> None:
         active = self._find_active_clip(worker_id)

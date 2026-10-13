@@ -57,7 +57,9 @@ def run(args: argparse.Namespace) -> int:
     port = args.port if args.port is not None else config.controller.port
     store = ControllerStore.open(args.db or default_db_path())
     manifest_path = args.manifest if args.manifest is not None else default_manifest_path()
-    manifest, durable = open_manifest(manifest_path)
+    manifest, durable = open_manifest(
+        manifest_path, lease_ttl_seconds=config.controller.orphan_grace_seconds
+    )
     server = ControllerServer(
         store=store,
         manifest=manifest,
@@ -66,6 +68,7 @@ def run(args: argparse.Namespace) -> int:
         port=port,
         templates=config.templates,
         roots=lambda: config.roots,
+        lease_ttl_seconds=config.controller.orphan_grace_seconds,
     )
     server.start_background()
     print(f"vc controller: listening on {server.base_url}")

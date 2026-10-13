@@ -43,7 +43,8 @@ Notes:
 - `token_env` is preferred; export `VC_WORKER_TOKEN` before starting the worker. Get the token
   from the controller machine with `vc controller --print-token` and pass it out of band.
 - `heartbeat_seconds` is optional (default 15 s, adopted from the controller). Lower values make
-  the job stage visible faster in the GUI; the lease TTL (90 s) does not change.
+  the job stage visible faster in the GUI; the controller's orphan grace
+  (`[controller] orphan_grace_seconds`, default 300 s) does not change.
 - Pilot mode (`[pilot] root`) delivers validated output into a separate tree and parks the clip
   in review with "originals untouched"; it never writes to the archive.
 
@@ -101,8 +102,15 @@ stance is in [security-notes.md](security-notes.md). Everything managed lives un
 
 ## Stop, resume, and recovery
 
-- The controller gives every claim a 90 s lease; workers renew it by heartbeat (15 s). No
-  renewal for 90 s means the worker counts as offline.
+- The controller gives every claim a job lease of `orphan_grace_seconds` (`[controller]` setting
+  on the controller machine, default 300 s = 5 minutes); workers renew it by heartbeat (15 s).
+  A node that sleeps inside the window wakes and resumes its job seamlessly; after the window the
+  clip is requeued and the woken node's local work is discarded (its next heartbeat gets `409`).
+- The Monitor still flips a silent node offline after `min(grace, 90 s)`, so a long grace never
+  delays the display even though the job lease is still held.
+- Tune the grace by setting `[controller] orphan_grace_seconds` (a positive integer, seconds) in
+  the controller machine's per-user config and restarting the app or `vc controller`; a GUI
+  attached to an already-running controller uses that controller's value.
 - Expired leases in the copy/encode stages are safe to retry: the source was never touched, so
   the controller requeues the clip and a later claim restarts it from scratch.
 - Expired leases in the replacement stages (`validated`, `transferring`, `replacing`) park the

@@ -17,6 +17,7 @@ from videocompressor.gui.controller_session import (
     start_controller_session,
 )
 from videocompressor.gui.monitor_client import HttpControllerClient, MonitorUnavailable
+from videocompressor.worker.client import ControllerClient
 
 
 def _config(
@@ -54,6 +55,25 @@ def test_host_mode_serves_the_contract_and_frees_the_port_on_close(tmp_path):
     session.close()  # idempotent
     with pytest.raises(MonitorUnavailable):
         HttpControllerClient(url, "test-token", timeout=0.5).probe()
+
+
+def test_host_mode_uses_the_configured_orphan_grace(tmp_path):
+    config = _config()
+    config.controller.orphan_grace_seconds = 120
+    session = _start(tmp_path, config)
+    try:
+        client = ControllerClient(session.client.base_url, "test-token")
+        response = client.register(
+            worker_id="node-a",
+            name="node-a",
+            roots={"archive": "/srv/archive"},
+            scratch_dir="/srv/scratch",
+            thread_cap=1,
+            version="0.1.0",
+        )
+        assert response["lease_seconds"] == 120
+    finally:
+        session.close()
 
 
 def test_host_mode_generates_and_saves_a_missing_token(tmp_path):

@@ -98,7 +98,8 @@ Workers receive the access token out of band (`VC_WORKER_TOKEN`); the controller
 - Per-user config (macOS):
   `~/Library/Application Support/Video Compressor/config.toml` — capture-time mode, named
   encoding templates, registered roots (sources and destinations), the controller bind
-  address/token, the local-worker setting, and the configured remote nodes.
+  address/token and orphan grace (`orphan_grace_seconds`, default 300 s), the local-worker
+  setting, and the configured remote nodes.
 - Queue manifest: `manifest.sqlite` in the same folder; the controller owns it while a run is
   active, and dry runs only read it.
 - Per-node worker config: separate TOML file owned by each worker (see the runbook); its

@@ -228,3 +228,45 @@ def test_enqueue_survives_a_controller_restart(tmp_path, clock, monkeypatch):
             controller.stop()
     finally:
         reopened.close()
+
+
+def test_open_manifest_forwards_the_custom_lease_ttl(tmp_path, clock, monkeypatch):
+    monkeypatch.setattr(manifest_module, "_utcnow", clock)
+    manifest, durable = open_manifest(
+        tmp_path / "manifest.sqlite", clock=clock, lease_ttl_seconds=300
+    )
+    try:
+        assert durable is True
+        _seed(manifest)
+        assert manifest.claim_next("a") is not None
+
+        clock.advance(200)  # past the 90 s fallback, inside the configured 300 s
+        assert manifest.reconcile() == []
+        record = manifest.get_clip("archive", CLIP)
+        assert record is not None and record.state is JobState.CLAIMED
+    finally:
+        manifest.close()
+
+
+def test_custom_lease_ttl_drives_claim_and_heartbeat(tmp_path, clock, monkeypatch):
+    monkeypatch.setattr(manifest_module, "_utcnow", clock)
+    manifest = Manifest.open(tmp_path / "manifest.sqlite", lease_ttl_seconds=300)
+    try:
+        _seed(manifest)
+        assert manifest.claim_next("a") is not None
+
+        clock.advance(200)
+        assert manifest.reconcile() == []
+        manifest.heartbeat("archive", CLIP, "a")  # renews under the custom TTL
+
+        clock.advance(299)  # t+499: still inside the renewed lease
+        assert manifest.reconcile() == []
+        record = manifest.get_clip("archive", CLIP)
+        assert record is not None and record.state is JobState.CLAIMED
+
+        clock.advance(2)  # t+501: silent for longer than the custom TTL
+        manifest.reconcile()
+        record = manifest.get_clip("archive", CLIP)
+        assert record is not None and record.state is JobState.QUEUED
+    finally:
+        manifest.close()

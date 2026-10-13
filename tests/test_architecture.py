@@ -42,7 +42,7 @@ SIZE_BUDGETS = {"src": 400, "tests": 450}
 
 #: Audited current offenders; recorded sizes are exact and may only shrink.
 SIZE_ALLOWLIST = {
-    "src/videocompressor/core/manifest.py": 476,
+    "src/videocompressor/core/manifest.py": 456,
     "src/videocompressor/core/scan.py": 464,
     "src/videocompressor/core/replace.py": 471,
     "src/videocompressor/core/ffmpeg.py": 470,

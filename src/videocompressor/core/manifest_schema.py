@@ -1,11 +1,12 @@
-"""Manifest DDL, schema migration, and row codecs (issue #39).
+"""Manifest DDL, DML statements, schema migration, and row codecs (issue #39).
 
 ``core/manifest.py`` keeps the transactional queue operations; this module owns
-the clips/events DDL, the idempotent column migration that adds the
-direct-conversion job fields (``destination_json``, ``delete_original``), and
-the conversions between SQLite rows and the shared models. Extracting the DDL
-and row codec is the seam ``docs/architecture.md`` recommends for keeping
-``core/manifest.py`` within its shrink-only size budget.
+the clips/events DDL, the clip upsert/update statements, the idempotent column
+migration that adds the direct-conversion job fields (``destination_json``,
+``delete_original``), and the conversions between SQLite rows and the shared
+models. Extracting the DDL, the statements, and the row codec is the seam
+``docs/architecture.md`` recommends for keeping ``core/manifest.py`` within its
+shrink-only size budget.
 
 The row codec tolerates a database opened read-only before the migration ran,
 returning the documented defaults for the added columns.
@@ -33,6 +34,8 @@ from videocompressor.core.models import (
 
 __all__ = [
     "SCHEMA",
+    "UPDATE_CLIP_SQL",
+    "UPSERT_CLIP_SQL",
     "capture_from_json",
     "capture_to_json",
     "destination_from_json",
@@ -78,6 +81,48 @@ CREATE TABLE IF NOT EXISTS events (
     root_id       TEXT,
     relative_path TEXT
 );
+"""
+
+#: Insert or update one clip row, keyed by root + relative path.
+UPSERT_CLIP_SQL = """
+INSERT INTO clips (
+    root_id, relative_path, state, classification,
+    source_size_bytes, source_mtime_ns, source_digest,
+    output_size_bytes, output_mtime_ns, output_digest,
+    capture_time_json, destination_json, delete_original,
+    template_id, settings_hash, worker_id, error,
+    created_at, updated_at, completed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(root_id, relative_path) DO UPDATE SET
+    state = excluded.state,
+    classification = excluded.classification,
+    source_size_bytes = excluded.source_size_bytes,
+    source_mtime_ns = excluded.source_mtime_ns,
+    source_digest = excluded.source_digest,
+    output_size_bytes = excluded.output_size_bytes,
+    output_mtime_ns = excluded.output_mtime_ns,
+    output_digest = excluded.output_digest,
+    capture_time_json = excluded.capture_time_json,
+    destination_json = excluded.destination_json,
+    delete_original = excluded.delete_original,
+    template_id = excluded.template_id,
+    settings_hash = excluded.settings_hash,
+    worker_id = excluded.worker_id,
+    error = excluded.error,
+    updated_at = excluded.updated_at,
+    completed_at = excluded.completed_at
+"""
+
+#: Full row update for one clip, keyed by root + relative path.
+UPDATE_CLIP_SQL = """
+UPDATE clips SET
+    state = ?, classification = ?, source_size_bytes = ?, source_mtime_ns = ?,
+    source_digest = ?, output_size_bytes = ?, output_mtime_ns = ?,
+    output_digest = ?, capture_time_json = ?, destination_json = ?,
+    delete_original = ?, template_id = ?, settings_hash = ?,
+    worker_id = ?, lease_expires_at = ?, error = ?, updated_at = ?,
+    completed_at = ?
+WHERE root_id = ? AND relative_path = ?
 """
 
 #: Columns added after the original clips schema: (name, SQL type/constraint).
