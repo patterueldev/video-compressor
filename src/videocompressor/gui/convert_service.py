@@ -46,7 +46,7 @@ VIDEO_SUFFIXES = frozenset({".mp4", ".mov"})
 
 PROBLEM_MISSING = "the file no longer exists"
 PROBLEM_UNREADABLE = "the file cannot be read"
-PROBLEM_OUTSIDE_ROOTS = "not under a registered root; register it on the Library tab"
+PROBLEM_OUTSIDE_ROOTS = "not under a registered root"
 
 MODE_OUTPUT_ROOT = "output_root"
 MODE_CUSTOM_FOLDER = "custom_folder"
@@ -197,7 +197,10 @@ def destination_from_fields(
     Returns ``(destination, None)`` or ``(None, problem)`` with a message the
     panel can show inline. The endpoint accepts ``output_root`` and
     ``same_folder`` only, so a custom folder resolves through the registered
-    roots (``root_for_folder``) into an ``output_root`` spec.
+    roots (``root_for_folder``) into an ``output_root`` spec; a folder that is
+    a root itself resolves to the mirror form (empty relative path). A folder
+    outside the roots is registered on Start by
+    :func:`videocompressor.gui.root_service.resolve_destination`.
     """
     if mode == MODE_SAME_FOLDER:
         return Destination(kind=DestinationKind.SAME_FOLDER), None
@@ -216,10 +219,18 @@ def destination_from_fields(
             return None, "choose an output folder"
         root = root_for_folder(roots, folder)
         if root is None:
-            return None, "the output folder must be inside a registered root; register it"
+            return (
+                None,
+                "the output folder is not under a registered root;"
+                " it will be registered when you press Start",
+            )
         relative = _relative_to_root(folder, root)
-        if relative is None or relative == ".":
-            return None, "pick a subfolder of the root, or use the registered-root destination"
+        if relative is None:
+            return None, "the output folder must be inside a registered root"
+        if relative == ".":
+            # The folder is the root itself: the empty relative path is the
+            # mirror form, keeping each clip's source folders under it.
+            return Destination(DestinationKind.OUTPUT_ROOT, root.id, ""), None
         return Destination(DestinationKind.OUTPUT_ROOT, root.id, relative), None
     return None, f"unknown destination mode {mode!r}"
 

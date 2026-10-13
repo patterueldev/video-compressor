@@ -17,11 +17,13 @@ available as optional tooling (see "Optional scan and dry-run tooling").
    attaches to a controller already serving the configured address.
 2. Select the videos in the Convert tab: drag files and/or folders into the app, or use the
    open-files / open-folder dialogs. A dropped folder recurses and picks up video files
-   (`.mp4`/`.mov`) only. Selections append to a pending list showing the clip count and total
-   size.
+   (`.mp4`/`.mov`) only; a folder outside the registered roots is registered as a new root
+   automatically, and files already under a root keep resolving to it. Selections append to a
+   pending list showing the clip count and total size.
 3. Choose the destination: a registered output root (optionally with a subfolder), a custom
-   folder inside a registered root, or "same folder as source" — the verified swap that replaces
-   each source at its own path and therefore consumes the original.
+   folder (registered as a new output root on use when it is outside the registered roots), or
+   "same folder as source" — the verified swap that replaces each source at its own path and
+   therefore consumes the original.
 4. Decide whether originals are deleted after conversion. The default is to keep them; a source
    is deleted only after its output exists at the destination and passes validation.
 5. Choose the processing template; its settings (single video bitrate, output height, audio,
@@ -48,7 +50,9 @@ reliable route it has to the archive; the mounted/local-path decision is recorde
 ## Optional scan and dry-run tooling
 
 `vc scan` and `vc probe` (and the GUI Library tab) remain available for archive-wide checks and
-reporting; a dry run never modifies the archive. The scan classifies each clip as new, complete,
+reporting; a dry run never modifies the archive. The Library tab also lists the registered
+roots, which can be removed again while they have no non-terminal clips; removal keeps manifest
+history and leaves remote node configs alone. The scan classifies each clip as new, complete,
 changed, or review, and shows capture time, bucket, bitrate, and estimated output size. Those
 labels feed the dry-run report and the GUI tables only — the convert flow does not require a scan,
 and conversion eligibility comes from the explicit selection, the job's destination, and the

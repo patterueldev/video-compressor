@@ -51,7 +51,9 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   monitor (`monitor_app`, `monitor_window`, `monitor_panel`, `monitor_tables`, `monitor_runner`,
   `monitor_service`, `monitor_client`, `controller_session`; issue #9) and the convert flow
   (`convert_panel`, `convert_destination`, `convert_drop` widgets plus the pure Python
-  `convert_service`; issue #41), the Nodes panel (`nodes_panel`, `nodes_dialog`,
+  `convert_service`; issue #41) with the pure Python `root_service` (root auto-registration, the
+  removal guard's read-only manifest counts, configured-node mapping checks; issue #82), the
+  Nodes panel (`nodes_panel`, `nodes_dialog`,
   `nodes_tables`, `nodes_runner`, `nodes_service`; issue #54), and the app-managed local
   worker (`local_worker` supervisor, `local_worker_config` generation,
   `local_worker_service` subprocess seams, plus the `local_worker_panel` strip; issue #52),
@@ -146,6 +148,30 @@ The GUI process is the controller and owns the durable queue and manifest while 
 Workers pull jobs and resolve each job's archive-relative path through their own configured
 archive-root mapping, so the same relative path works on the Mac, another computer, or the Linux
 homeserver.
+
+### Root auto-registration and removal (issue #82)
+
+Roots stay the load-bearing identity: every clip is keyed by `root_id` +
+archive-relative path, and each node resolves that pair through its own mapping. The convert flow
+no longer makes the operator visit the Library form first:
+
+- A dropped or picked path outside the registered roots registers the minimal folder — the
+  folder itself, or a file's containing folder — under a derived id (slug of the folder name
+  plus a short hash of the resolved path, truncated to the 64-character id pattern; name from the
+  folder name) and persists it to the per-user config once per batch. Files already under a root
+  keep that root, and a folder inside an existing root resolves to it. A failed write rolls the
+  config back and leaves the problem rows visible.
+- A custom output folder outside the roots is registered on Start; the destination becomes the
+  new root with an empty relative path, the documented mirror form (each clip keeps its source
+  folders under the picked folder). The registered-output-root mode is unchanged.
+- The Library roots panel can remove a root again. The guard reads the local manifest strictly
+  read-only and refuses while the root has non-terminal clips (naming the counts); removal
+  rewrites only the per-user config, so manifest history stays intact and remote node configs are
+  untouched (their extra mappings are harmless).
+- After enqueue the convert summary lists configured `[[nodes]]` entries whose root mapping does
+  not cover a root used by the batch, pointing at `vc node install`. Those nodes cannot process
+  the new root until the mapping is added; the root-aware claim filter (issue #83) keeps
+  unmapped-root clips queued instead of failing them.
 
 ## Archive scan artifacts (issue #3, optional tooling)
 
