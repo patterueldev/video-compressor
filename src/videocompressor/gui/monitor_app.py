@@ -2,7 +2,9 @@
 
 The GUI hosts the controller in-process (plan.md) and attaches to a controller
 v1 endpoint when the configured address is already served. ``gui/app.py``
-remains the library-only entry from issue #8.
+remains the library-only entry from issue #8. A best-effort SIGTERM/SIGINT
+handler stops the app-managed local worker (issue #70) before the loop exits,
+so a signalled quit cannot orphan the child.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from videocompressor.gui.controller_session import (
 )
 from videocompressor.gui.local_worker import LocalWorkerSupervisor
 from videocompressor.gui.monitor_window import MonitorWindow
+from videocompressor.gui.shutdown_signals import install_shutdown_signals
 
 __all__ = ["run"]
 
@@ -67,7 +70,9 @@ def run(*, config_path: Path | None = None, manifest_path: Path | None = None) -
         supervisor=supervisor,
     )
     window.show()
+    restore_signals = install_shutdown_signals(supervisor.shutdown, app.quit)
     try:
         return app.exec()
     finally:
+        restore_signals()
         session.close()

@@ -15,17 +15,21 @@ registry shows no online worker with the same id (or the same root mapping),
 or when the app can prove the row is stale — ``stop()``/``shutdown()`` record
 the time they confirmed no app-managed worker runs, and a row whose last
 heartbeat predates that time is a dead registration, not a live node.
+
+The process side is reaped too (issue #70): before spawning the child, a
+process still running the generated ``local-worker.toml`` is terminated
+(:mod:`videocompressor.gui.local_worker_processes`), so a child orphaned by a
+signalled quit or a crash can never keep claiming with stale code or collide
+with the new child's startup scratch sweep.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -33,13 +37,22 @@ from videocompressor.controller.protocol import ControllerError
 from videocompressor.core.config import AppConfig
 from videocompressor.gui.local_worker_config import (
     ERR_LOG_FILENAME,
-    STATE_FILENAME,
     TOKEN_ENV_VAR,
     build_local_worker_toml,
     default_scratch_dir,
     local_worker_toml_path,
     service_command,
     worker_command,
+)
+from videocompressor.gui.local_worker_marker import (
+    read_stopped_at,
+    stopped_before,
+    write_stop_marker,
+)
+from videocompressor.gui.local_worker_processes import (
+    ProcessTable,
+    SystemProcessTable,
+    terminate_stale_workers,
 )
 from videocompressor.gui.local_worker_service import (
     ProcessHandle,
@@ -120,12 +133,14 @@ class LocalWorkerSupervisor:
         client: WorkerRegistryClient,
         spawn: SpawnProcess | None = None,
         run_command: RunServiceCommand | None = None,
+        processes: ProcessTable | None = None,
     ) -> None:
         self.config = config
         self.config_path = config_path
         self._client = client
         self._spawn = spawn if spawn is not None else spawn_child
         self._run_command = run_command if run_command is not None else run_service_command
+        self._processes = processes if processes is not None else SystemProcessTable()
         self._process: ProcessHandle | None = None
         self._last = LocalWorkerOutcome(STATE_STOPPED, "the local worker has not been started")
 
@@ -191,7 +206,7 @@ class LocalWorkerSupervisor:
                     f"cannot remove the local worker service: {service_error(result)}",
                 )
             details.append(f"service {payload.get('result', 'removed')}")
-        self._write_marker()
+        write_stop_marker(self.config_path)
         return self._settle(STATE_STOPPED, "; ".join(["stopped", *details]))
 
     def shutdown(self) -> None:
@@ -240,11 +255,11 @@ class LocalWorkerSupervisor:
             )
         worker_id = self.config.local_worker.worker_id
         roots = self._roots_mapping()
-        stopped_at = self._read_stopped_at()
+        stopped_at = read_stopped_at(self.config_path)
         for worker in workers:
             if not worker.online or not (worker.worker_id == worker_id or worker.roots == roots):
                 continue
-            if stopped_at is not None and _stopped_before(worker.last_seen, stopped_at):
+            if stopped_at is not None and stopped_before(worker.last_seen, stopped_at):
                 continue  # a dead registration: heartbeat predates our confirmed stop
             return self._settle(
                 STATE_ALREADY_RUNNING, f"worker {worker.worker_id!r} is already online"
@@ -268,7 +283,7 @@ class LocalWorkerSupervisor:
         return self._settle(STATE_STARTED_SERVICE, f"service {payload.get('result', 'installed')}")
 
     def _ensure_child(self) -> LocalWorkerOutcome:
-        """Stop a leftover service, then spawn the managed child once."""
+        """Stop a leftover service, reap stale children, then spawn the child once."""
         if self._service_installed():
             result = self._run_command(
                 service_command(self.worker_config_path(), UNINSTALL_SERVICE), {}
@@ -278,7 +293,19 @@ class LocalWorkerSupervisor:
                     STATE_ERROR,
                     f"cannot stop the local worker service: {service_error(result)}",
                 )
-            self._write_marker()  # the service was just stopped
+            write_stop_marker(self.config_path)  # the service was just stopped
+        terminated = terminate_stale_workers(
+            self.worker_config_path(),
+            table=self._processes,
+            exclude_pids={os.getpid()},
+            terminate_timeout=CHILD_WAIT_SECONDS,
+            kill_timeout=KILL_WAIT_SECONDS,
+        )
+        if terminated:
+            # The killed child's registration is stale now; record the stop so
+            # the duplicate check below treats its row as dead and starts ours.
+            _log.info("terminated %d stale local worker process(es)", len(terminated))
+            write_stop_marker(self.config_path)
         duplicate = self._check_registry_duplicate()
         if duplicate is not None:
             return duplicate
@@ -325,7 +352,7 @@ class LocalWorkerSupervisor:
                 except subprocess.TimeoutExpired:
                     return False
         self._process = None
-        self._write_marker()
+        write_stop_marker(self.config_path)
         return True
 
     # -- state on disk -----------------------------------------------------
@@ -343,31 +370,6 @@ class LocalWorkerSupervisor:
         path.chmod(0o600)
         return True
 
-    def _marker_path(self) -> Path:
-        return self.config_path.parent / STATE_FILENAME
-
-    def _read_stopped_at(self) -> datetime | None:
-        try:
-            payload = json.loads(self._marker_path().read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
-        if not isinstance(payload, Mapping):
-            return None
-        value = payload.get("stopped_at")
-        if not isinstance(value, str):
-            return None
-        try:
-            return _as_utc(datetime.fromisoformat(value))
-        except ValueError:
-            return None
-
-    def _write_marker(self) -> None:
-        payload = {"stopped_at": datetime.now(UTC).isoformat()}
-        try:
-            self._marker_path().write_text(json.dumps(payload), encoding="utf-8")
-        except OSError:
-            _log.warning("could not record the local worker stop time")
-
     # -- helpers -----------------------------------------------------------
 
     def _roots_mapping(self) -> dict[str, str]:
@@ -380,14 +382,3 @@ class LocalWorkerSupervisor:
         outcome = LocalWorkerOutcome(state, detail)
         self._last = outcome
         return outcome
-
-
-def _as_utc(when: datetime) -> datetime:
-    return when.replace(tzinfo=UTC) if when.tzinfo is None else when
-
-
-def _stopped_before(last_seen: datetime | None, stopped_at: datetime) -> bool:
-    """Whether ``last_seen`` predates a confirmed stop (a dead registration)."""
-    if last_seen is None:
-        return False
-    return _as_utc(last_seen) <= stopped_at
