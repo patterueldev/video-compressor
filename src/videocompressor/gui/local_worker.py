@@ -228,6 +228,12 @@ class LocalWorkerSupervisor:
             )
         exit_code = self.managed_child_exit_code()
         if self._process is not None and exit_code is not None:
+            if exit_code == 0:
+                # A clean exit is an operator stop (heartbeat stop or a signal),
+                # not a crash; the app must not render it as an error or restart.
+                return LocalWorkerOutcome(
+                    STATE_STOPPED, "the local worker exited (stop requested)"
+                )
             return LocalWorkerOutcome(
                 STATE_ERROR,
                 f"the local worker child exited (code {exit_code});"

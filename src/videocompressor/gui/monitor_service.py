@@ -62,6 +62,7 @@ class WorkerStatus:
     active_path: str | None
     progress: JobProgress | None
     progress_at: datetime | None
+    stop_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -126,9 +127,9 @@ class MonitorSession:
             fetched_at=datetime.now().astimezone(),
         )
 
-    def stop_worker(self, worker_id: str) -> None:
-        """Ask a worker to terminate its active job (safe requeue)."""
-        self._client.stop_worker(worker_id)
+    def stop_worker(self, worker_id: str, *, mode: str = "cancel") -> None:
+        """Ask a worker to stop with ``mode`` (cancel now or drain)."""
+        self._client.stop_worker(worker_id, mode=mode)
 
     def resume_worker(self, worker_id: str) -> None:
         """Clear a pending stop request."""
@@ -168,6 +169,7 @@ def parse_workers(payload: Mapping[str, Any]) -> tuple[WorkerStatus, ...]:
                 last_seen=_optional_datetime(entry.get("last_seen")),
                 roots=_str_map(entry.get("roots")),
                 stop_requested=bool(entry.get("stop_requested")),
+                stop_mode=_optional_str(entry.get("stop_mode")),
                 active_root_id=_optional_str(active.get("root_id")),
                 active_path=_optional_str(active.get("relative_path")),
                 progress=_progress(progress) if progress else None,

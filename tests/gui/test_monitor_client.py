@@ -59,10 +59,19 @@ def test_stop_and_resume_round_trip(server, api, seed_clip):
     client = _client(server)
 
     client.stop_worker("a")
-    assert client.workers()["workers"][0]["stop_requested"] is True
+    entry = client.workers()["workers"][0]
+    assert entry["stop_requested"] is True
+    assert entry["stop_mode"] == "cancel"
 
     client.resume_worker("a")
-    assert client.workers()["workers"][0]["stop_requested"] is False
+    entry = client.workers()["workers"][0]
+    assert entry["stop_requested"] is False
+    assert entry["stop_mode"] is None
+
+    client.stop_worker("a", mode="drain")
+    entry = client.workers()["workers"][0]
+    assert entry["stop_requested"] is True
+    assert entry["stop_mode"] == "drain"
 
 
 def test_enqueue_round_trip(tmp_path, store, manifest, clock):

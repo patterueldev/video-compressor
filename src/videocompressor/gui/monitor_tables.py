@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, Qt
 
+from videocompressor.core.models import StopMode
 from videocompressor.gui.monitor_service import (
     MonitorSnapshot,
     WorkerStatus,
@@ -91,7 +92,11 @@ class NodesModel(_SnapshotModel):
         if column == 4:
             return format_roots(worker.roots)
         if column == 5:
-            return "stopping…" if worker.stop_requested else "-"
+            if not worker.stop_requested:
+                return "-"
+            if worker.stop_mode == StopMode.DRAIN.value:
+                return "draining…"
+            return "stopping…"
         return "-"
 
 

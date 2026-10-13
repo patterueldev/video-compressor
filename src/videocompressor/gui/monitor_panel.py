@@ -68,8 +68,12 @@ class MonitorPanel(QWidget):
         self.nodes_view = _table_view(self.nodes_model)
         self.jobs_view = _table_view(self.jobs_model)
 
-        self.stop_button = QPushButton("Stop job")
+        self.stop_button = QPushButton("Stop now")
+        self.stop_button.setToolTip("Cancel the active clip (it is requeued) and stop the node")
         self.stop_button.setEnabled(False)
+        self.drain_button = QPushButton("Stop after current")
+        self.drain_button.setToolTip("Finish the current clip, then stop the node")
+        self.drain_button.setEnabled(False)
         self.resume_button = QPushButton("Resume job")
         self.resume_button.setEnabled(False)
 
@@ -83,6 +87,7 @@ class MonitorPanel(QWidget):
         self._build_layout()
         self.nodes_view.selectionModel().selectionChanged.connect(self._update_selection)
         self.stop_button.clicked.connect(self.stop_selected)
+        self.drain_button.clicked.connect(self.drain_selected)
         self.resume_button.clicked.connect(self.resume_selected)
         self.refresh_button.clicked.connect(self.runner.refresh_now)
         self.runner.start()
@@ -120,16 +125,29 @@ class MonitorPanel(QWidget):
         return self.nodes_model.worker_at(row).worker_id
 
     def stop_selected(self) -> None:
-        """Ask the selected worker to terminate its active job (safe requeue)."""
+        """Ask the selected worker to stop now (its active job is requeued)."""
         worker_id = self.selected_worker()
         if worker_id is None:
             return
         try:
-            self.session.stop_worker(worker_id)
+            self.session.stop_worker(worker_id, mode="cancel")
         except (ControllerError, MonitorUnavailable) as error:
             self.show_error(f"cannot stop {worker_id}: {describe_monitor_error(error)}")
             return
-        self.status_label.setText(f"stop requested for {worker_id}")
+        self.status_label.setText(f"stop now requested for {worker_id}")
+        self.runner.refresh_now()
+
+    def drain_selected(self) -> None:
+        """Ask the selected worker to finish its current clip, then stop."""
+        worker_id = self.selected_worker()
+        if worker_id is None:
+            return
+        try:
+            self.session.stop_worker(worker_id, mode="drain")
+        except (ControllerError, MonitorUnavailable) as error:
+            self.show_error(f"cannot stop {worker_id}: {describe_monitor_error(error)}")
+            return
+        self.status_label.setText(f"stop after current requested for {worker_id}")
         self.runner.refresh_now()
 
     def resume_selected(self) -> None:
@@ -181,6 +199,7 @@ class MonitorPanel(QWidget):
 
         actions = QHBoxLayout()
         actions.addWidget(self.stop_button)
+        actions.addWidget(self.drain_button)
         actions.addWidget(self.resume_button)
         actions.addStretch(1)
 
@@ -204,11 +223,10 @@ class MonitorPanel(QWidget):
 
     def _update_selection(self) -> None:
         worker = self._worker_by_id(self.selected_worker())
-        can_stop = (
-            worker is not None and worker.active_path is not None and not worker.stop_requested
-        )
+        can_stop = worker is not None and not worker.stop_requested
         can_resume = worker is not None and worker.stop_requested
         self.stop_button.setEnabled(can_stop)
+        self.drain_button.setEnabled(can_stop)
         self.resume_button.setEnabled(can_resume)
         self._render_job_log(worker)
 

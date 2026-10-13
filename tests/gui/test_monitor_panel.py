@@ -73,13 +73,15 @@ def test_selection_enables_stop_and_filters_the_job_log(qapp):
         panel.nodes_view.selectRow(0)
         assert panel.selected_worker() == "homeserver"
         assert panel.stop_button.isEnabled()
+        assert panel.drain_button.isEnabled()
         assert not panel.resume_button.isEnabled()
         assert ACTIVE_PATH in panel.job_log.toPlainText()
         assert "claimed GS010001.MP4" in panel.job_log.toPlainText()
 
         panel.nodes_view.selectRow(1)
         assert panel.selected_worker() == "macbook"
-        assert not panel.stop_button.isEnabled()
+        assert panel.stop_button.isEnabled()  # an idle node can be stopped too
+        assert panel.drain_button.isEnabled()
         assert not panel.resume_button.isEnabled()
     finally:
         panel.shutdown()
@@ -95,17 +97,44 @@ def test_stop_and_resume_call_the_session_and_refresh(qapp):
         panel.nodes_view.selectRow(0)
 
         panel.stop_button.click()
-        assert session.stops == ["homeserver"]
+        assert session.stops == [("homeserver", "cancel")]
         assert runner.refreshes == 1
-        assert "stop requested for homeserver" in panel.status_label.text()
+        assert "stop now requested for homeserver" in panel.status_label.text()
 
         panel.apply_snapshot(make_snapshot(workers=[make_worker(stop_requested=True)]))
         panel.nodes_view.selectRow(0)
         assert _cell(panel.nodes_model, 0, 5) == "stopping…"
+        assert not panel.stop_button.isEnabled()
+        assert not panel.drain_button.isEnabled()
         assert panel.resume_button.isEnabled()
         panel.resume_button.click()
         assert session.resumes == ["homeserver"]
         assert runner.refreshes == 2
+    finally:
+        panel.shutdown()
+        dispose(panel)
+
+
+def test_drain_action_works_for_an_idle_node(qapp):
+    session = FakeSession(make_snapshot(workers=[make_idle_worker()]))
+    runner = FakeMonitorRunner()
+    panel = _panel(session, runner)
+    try:
+        panel.apply_snapshot(session.snapshot())
+        panel.nodes_view.selectRow(0)
+
+        panel.drain_button.click()
+        assert session.stops == [("macbook", "drain")]
+        assert runner.refreshes == 1
+        assert "stop after current requested for macbook" in panel.status_label.text()
+
+        panel.apply_snapshot(
+            make_snapshot(
+                workers=[make_idle_worker(stop_requested=True, stop_mode="drain")]
+            )
+        )
+        panel.nodes_view.selectRow(0)
+        assert _cell(panel.nodes_model, 0, 5) == "draining…"
     finally:
         panel.shutdown()
         dispose(panel)
