@@ -17,7 +17,7 @@ from videocompressor.worker.units import (
     systemd_unit_name,
     unit_path,
 )
-from worker.service_support import COMMAND, TOKEN, WORKER_ID, make_paths, make_spec
+from worker.service_support import COMMAND, PATH_VALUE, TOKEN, WORKER_ID, make_paths, make_spec
 
 
 def test_launchd_names_paths_and_logs(tmp_path: Path) -> None:
@@ -76,6 +76,7 @@ def test_launchd_plist_payload(tmp_path: Path) -> None:
         "ProcessType": "Background",
         "StandardOutPath": str(paths.log_dir / "node-a.out.log"),
         "StandardErrorPath": str(paths.log_dir / "node-a.err.log"),
+        "EnvironmentVariables": {"PATH": PATH_VALUE},
     }
 
 
@@ -84,12 +85,30 @@ def test_launchd_plist_carries_and_redacts_the_token(tmp_path: Path) -> None:
     spec = make_spec(tmp_path / "worker.toml", token_env="VC_WORKER_TOKEN", token_value=TOKEN)
 
     payload = plistlib.loads(render_launchd_plist(spec, paths))
-    assert payload["EnvironmentVariables"] == {"VC_WORKER_TOKEN": TOKEN}
+    assert payload["EnvironmentVariables"] == {"VC_WORKER_TOKEN": TOKEN, "PATH": PATH_VALUE}
 
     preview = render_unit(spec, paths, redact_token=True)
     assert isinstance(preview, bytes)
     assert TOKEN not in preview.decode()
-    assert plistlib.loads(preview)["EnvironmentVariables"] == {"VC_WORKER_TOKEN": REDACTED}
+    assert plistlib.loads(preview)["EnvironmentVariables"] == {
+        "VC_WORKER_TOKEN": REDACTED,
+        "PATH": PATH_VALUE,
+    }
+
+
+def test_units_embed_the_service_path(tmp_path: Path) -> None:
+    """Both platforms carry an explicit PATH so a brew-only ffmpeg resolves (#71)."""
+    spec = make_spec(tmp_path / "worker.toml")
+
+    payload = plistlib.loads(render_launchd_plist(spec, make_paths(tmp_path, "macos")))
+    assert payload["EnvironmentVariables"]["PATH"] == PATH_VALUE
+
+    text = render_systemd_unit(spec, make_paths(tmp_path, "linux"))
+    assert f"Environment=PATH={PATH_VALUE}\n" in text
+
+    spaced = make_spec(tmp_path / "worker.toml", path_value="/opt/my tools/bin:/usr/bin")
+    spaced_text = render_systemd_unit(spaced, make_paths(tmp_path, "linux"))
+    assert 'Environment="PATH=/opt/my tools/bin:/usr/bin"\n' in spaced_text
 
 
 def test_systemd_unit_text(tmp_path: Path) -> None:
@@ -106,6 +125,7 @@ def test_systemd_unit_text(tmp_path: Path) -> None:
         f"WorkingDirectory={spec.config_path.parent}\n"
         "ExecStart=/opt/venv/bin/python -m videocompressor.cli worker "
         "--config /abs/worker.toml\n"
+        f"Environment=PATH={PATH_VALUE}\n"
         "Restart=on-failure\n"
         "RestartSec=30\n"
         "StandardOutput=journal\n"
@@ -141,6 +161,7 @@ def test_systemd_quoting_and_specifier_escaping(tmp_path: Path) -> None:
         worker_id=WORKER_ID,
         config_path=Path('/tmp/50% done/worker "x".toml'),
         command=("/Applications/My Tools/python", "-m", "videocompressor.cli"),
+        path_value=PATH_VALUE,
     )
 
     text = render_systemd_unit(spec, paths)

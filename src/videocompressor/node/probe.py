@@ -2,17 +2,21 @@
 
 One POSIX ``sh`` script reports everything as ``VC_PROBE_<key>=<value>`` lines;
 the parser is key-agnostic, so unknown or missing markers never crash the probe.
-The probe is read-only and runs before any install decision. It prepends the
-Homebrew locations to ``PATH`` because non-interactive SSH shells on macOS
-often miss them.
+The probe is read-only and runs before any install decision. ffmpeg/ffprobe are
+resolved through ``command -v`` and then the common absolute locations
+(``/opt/homebrew/bin``, ``/usr/local/bin``), because non-interactive SSH shells
+on macOS often miss Homebrew; those locations are also appended to ``PATH`` for
+the remaining checks (issue #71).
 """
 
 from __future__ import annotations
 
 import shlex
+from collections.abc import Sequence
 
 from videocompressor.node.models import NodeProbe, ProbeError
 from videocompressor.node.ssh import SshRunner
+from videocompressor.worker.toolpaths import FALLBACK_TOOL_DIRS
 
 __all__ = ["PROBE_TIMEOUT", "parse_probe_output", "probe_node"]
 
@@ -20,7 +24,6 @@ PROBE_TIMEOUT = 30.0
 
 _PROBE_SCRIPT = """\
 set -u
-PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 expand() {
     case "$1" in
         "~") printf '%s' "$HOME" ;;
@@ -30,6 +33,27 @@ expand() {
     esac
 }
 mark() { printf 'VC_PROBE_%s=%s\\n' "$1" "$2"; }
+# Resolve ffmpeg/ffprobe before touching PATH, so the absolute fallback (not
+# PATH mutation) is what makes a Homebrew install visible to a non-interactive
+# SSH shell. VC_FALLBACK_BIN_DIRS is space-separated and space-free by design
+# (the for loop word-splits it).
+resolve_tool() {
+    _resolved=$(command -v "$1" 2>/dev/null || true)
+    if [ -z "$_resolved" ]; then
+        for _dir in $VC_FALLBACK_BIN_DIRS; do
+            if [ -x "$_dir/$1" ]; then
+                _resolved="$_dir/$1"
+                break
+            fi
+        done
+    fi
+    printf '%s' "$_resolved"
+}
+VC_FALLBACK_BIN_DIRS="${VC_FALLBACK_BIN_DIRS:-/opt/homebrew/bin /usr/local/bin}"
+ffmpeg_bin=$(resolve_tool ffmpeg)
+ffprobe_bin=$(resolve_tool ffprobe)
+# The extension still serves the remaining checks (for example brew python3).
+PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 install_dir=$(expand "${VC_INSTALL_DIR:-}")
 scratch_dir=$(expand "${VC_SCRATCH_DIR:-}")
 mark version 1
@@ -46,12 +70,12 @@ if command -v python3 >/dev/null 2>&1; then
         mark venv_ok no
     fi
 fi
-if command -v ffmpeg >/dev/null 2>&1; then
-    mark ffmpeg "$(command -v ffmpeg)"
-    mark ffmpeg_version "$(ffmpeg -version 2>/dev/null | head -n 1)"
+if [ -n "$ffmpeg_bin" ]; then
+    mark ffmpeg "$ffmpeg_bin"
+    mark ffmpeg_version "$("$ffmpeg_bin" -version 2>/dev/null | head -n 1)"
 fi
-if command -v ffprobe >/dev/null 2>&1; then
-    mark ffprobe "$(command -v ffprobe)"
+if [ -n "$ffprobe_bin" ]; then
+    mark ffprobe "$ffprobe_bin"
 fi
 mark disk_free_kb "$(df -Pk "$HOME" 2>/dev/null | tail -n 1 | awk '{print $4}')"
 if [ -n "$scratch_dir" ]; then
@@ -90,8 +114,15 @@ def parse_probe_output(text: str) -> dict[str, str]:
     return data
 
 
-def _probe_command(install_dir: str, scratch_dir: str | None) -> str:
-    env = {"VC_INSTALL_DIR": install_dir}
+def _probe_command(
+    install_dir: str,
+    scratch_dir: str | None,
+    fallback_bin_dirs: Sequence[str] = FALLBACK_TOOL_DIRS,
+) -> str:
+    env = {
+        "VC_INSTALL_DIR": install_dir,
+        "VC_FALLBACK_BIN_DIRS": " ".join(fallback_bin_dirs),
+    }
     if scratch_dir:
         env["VC_SCRATCH_DIR"] = scratch_dir
     prefix = " ".join(f"{name}={shlex.quote(value)}" for name, value in env.items())
@@ -111,9 +142,10 @@ def probe_node(
     install_dir: str = "~/.videocompressor",
     scratch_dir: str | None = None,
     timeout: float = PROBE_TIMEOUT,
+    fallback_bin_dirs: Sequence[str] = FALLBACK_TOOL_DIRS,
 ) -> NodeProbe:
     """Run the read-only probe and assemble a :class:`NodeProbe`."""
-    command = _probe_command(install_dir, scratch_dir)
+    command = _probe_command(install_dir, scratch_dir, fallback_bin_dirs)
     result = runner.run(command, timeout=timeout)
     if result.returncode != 0:
         detail = result.stderr.strip() or f"exit {result.returncode}"

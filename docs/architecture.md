@@ -58,9 +58,10 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
 - `worker`: `agent` (register/heartbeat/claim loop and stop), `client` (controller HTTP v1),
   `outcome` (per-job result type), `pipeline` (per-job copy → encode → validate → replace),
   `destination` (destination decode/resolve/place/delete), `transfer` (pilot delivery and
-  replacement confirm), `config` (per-node TOML), `scratch` (local job dirs), and
+  replacement confirm), `config` (per-node TOML), `scratch` (local job dirs),
   `units`/`service`/`service_platform` (launchd/systemd unit rendering and service
-  install/status/uninstall; issue #51).
+  install/status/uninstall; issue #51), and `toolpaths` (ffmpeg/ffprobe directory detection for
+  the service PATH; issue #71).
 - `node`: `models` (host/probe/spec/report types), `ssh` (OpenSSH runner seam), `probe`
   (read-only host report), `config` (worker TOML render/push), `service` (frozen #51 CLI
   adapter), `distribution` (wheelhouse build/validate), `wheel` (force-reinstall of the staged

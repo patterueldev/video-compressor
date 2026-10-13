@@ -38,6 +38,7 @@ from worker.service_support import (
     TOKEN,
     MissingBinaryRunner,
     RecordingRunner,
+    make_paths,
     make_spec,
     probe,
     systemd_show,
@@ -411,6 +412,23 @@ def test_spec_from_config_keeps_an_inline_token_out_of_the_spec(tmp_path: Path) 
 
     assert spec.token_env is None
     assert spec.token_value is None
+
+
+def test_spec_from_config_carries_the_detected_service_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "videocompressor.worker.service.service_path_value",
+        lambda: "/detected/bin:/usr/bin",
+    )
+    config_path = write_worker_config(tmp_path)
+
+    spec = spec_from_config(load_worker_config(config_path), config_path)
+
+    assert spec.path_value == "/detected/bin:/usr/bin"
+    assert "Environment=PATH=/detected/bin:/usr/bin\n" in render_systemd_unit(
+        spec, make_paths(tmp_path, "linux")
+    )
 
 
 def test_read_worker_id_tolerates_a_broken_config(tmp_path: Path) -> None:

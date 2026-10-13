@@ -141,6 +141,11 @@ Notes:
   at install time (a 0600 `EnvironmentFile` on Linux, `EnvironmentVariables` in the 0600 plist on
   macOS) and is never printed. Uninstall removes the Linux env file even if the config later
   switched to an inline token. **Rotating the token requires re-running `install-service`.**
+- The rendered unit embeds a `PATH` covering the directories of the detected `ffmpeg`/`ffprobe`
+  (a non-interactive shell PATH often misses Homebrew's `/opt/homebrew/bin`) plus the standard
+  system directories, so the service-run worker resolves the same binaries `vc node probe`
+  reports; re-running `install-service` refreshes the unit when the detected layout changes
+  (issue #71).
 - Reinstalling an identical unit on a running service performs no command; a changed unit is
   rewritten and the service restarted. The launchd log files grow until macOS log rotation
   handles them; the systemd journal is bounded by journald.
@@ -162,8 +167,10 @@ vc node status --host node.example.com
 vc node uninstall --host node.example.com                       # add --purge to remove the install dir
 ```
 
-The remote host needs Python 3.12+ with venv/ensurepip and ffmpeg on `PATH`; `probe` checks all
-three (and free disk space for `--scratch-dir`) before anything is installed. Connection options
+The remote host needs Python 3.12+ with venv/ensurepip and ffmpeg (`ffmpeg`/`ffprobe` on
+`PATH`, or at the common Homebrew locations `/opt/homebrew/bin`/`/usr/local/bin` when a
+non-interactive shell's PATH misses them); `probe` checks all three (and free disk space for
+`--scratch-dir`) before anything is installed. Connection options
 (`--user`, `--port`, `--identity`, `--connect-timeout`) are shared by all four actions, and each
 accepts `--install-dir` (default `~/.videocompressor`) and `--json`.
 

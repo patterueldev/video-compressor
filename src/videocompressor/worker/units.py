@@ -100,7 +100,12 @@ def render_unit(
 def render_launchd_plist(
     spec: ServiceSpec, paths: ServicePaths, *, redact_token: bool = False
 ) -> bytes:
-    """Render the LaunchAgent plist (deterministic XML, sorted keys)."""
+    """Render the LaunchAgent plist (deterministic XML, sorted keys).
+
+    The agent always gets an explicit ``PATH`` (#71): launchd would otherwise
+    run the worker with its default PATH and a brew-only ffmpeg/ffprobe would
+    stay invisible.
+    """
     payload: dict[str, object] = {
         "Label": launchd_label(spec.worker_id),
         "ProgramArguments": list(spec.command),
@@ -112,9 +117,11 @@ def render_launchd_plist(
         "StandardOutPath": str(paths.log_dir / f"{spec.worker_id}.out.log"),
         "StandardErrorPath": str(paths.log_dir / f"{spec.worker_id}.err.log"),
     }
+    environment: dict[str, str] = {"PATH": spec.path_value}
     if spec.token_env is not None:
         value = REDACTED if redact_token else (spec.token_value or "")
-        payload["EnvironmentVariables"] = {spec.token_env: value}
+        environment[spec.token_env] = value
+    payload["EnvironmentVariables"] = environment
     return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=True)
 
 
@@ -132,6 +139,7 @@ def render_systemd_unit(
         "Type=simple",
         f"WorkingDirectory={_arg(str(spec.config_path.parent))}",
         f"ExecStart={' '.join(_arg(part) for part in spec.command)}",
+        f"Environment={_arg(f'PATH={spec.path_value}')}",
     ]
     env_file = env_file_path(spec, paths)
     if spec.token_env is not None and env_file is not None:

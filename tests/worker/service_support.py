@@ -15,6 +15,10 @@ from videocompressor.worker.service import CommandResult, ServicePaths, ServiceS
 TOKEN = "secret-token"
 WORKER_ID = "node-a"
 
+#: Pinned PATH a rendered unit carries in tests; production detection is in
+#: ``videocompressor.worker.toolpaths`` (issue #71).
+PATH_VALUE = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
 COMMAND = (
     "/opt/venv/bin/python",
     "-m",
@@ -64,12 +68,14 @@ def make_spec(
     token_env: str | None = None,
     token_value: str | None = None,
     command: tuple[str, ...] = COMMAND,
+    path_value: str = PATH_VALUE,
 ) -> ServiceSpec:
     """Build a service spec without loading a real config file."""
     return ServiceSpec(
         worker_id=worker_id,
         config_path=config_path.resolve(),
         command=command,
+        path_value=path_value,
         token_env=token_env,
         token_value=token_value,
     )
