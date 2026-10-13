@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS workers (
     last_seen TEXT,
     stop_requested INTEGER NOT NULL DEFAULT 0,
     stop_mode TEXT,
+    machine_id TEXT,
     registered_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -67,12 +68,12 @@ CREATE TABLE IF NOT EXISTS runs (
 """
 
 #: Columns added after the original workers schema: (name, SQL type/constraint).
-_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (("stop_mode", "TEXT"),)
+_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (("stop_mode", "TEXT"), ("machine_id", "TEXT"))
 
 #: Columns listed by the worker-row codec, in :func:`worker_from_row` order.
 WORKER_COLUMNS = (
     "worker_id, name, roots_json, scratch_dir, thread_cap, version,"
-    " last_seen, stop_requested, stop_mode, registered_at"
+    " last_seen, stop_requested, stop_mode, registered_at, machine_id"
 )
 
 #: Columns listed by the event-row codec, in :func:`event_from_row` order.
@@ -96,6 +97,7 @@ class WorkerRow:
     stop_requested: bool
     registered_at: datetime
     stop_mode: StopMode | None = None
+    machine_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -157,6 +159,7 @@ def worker_from_row(row: tuple) -> WorkerRow:
         stop_requested=bool(row[7]),
         stop_mode=StopMode(raw_mode) if raw_mode else None,
         registered_at=datetime.fromisoformat(row[9]),
+        machine_id=row[10],
     )
 
 

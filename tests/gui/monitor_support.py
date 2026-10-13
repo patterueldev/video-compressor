@@ -126,6 +126,7 @@ def worker_payload(worker_id: str = "homeserver", **overrides: object) -> dict[s
         "scratch_dir": "/srv/scratch",
         "thread_cap": 2,
         "version": "0.1.0",
+        "machine_id": worker_id,
         "stop_requested": False,
         "active": {"root_id": "archive", "relative_path": ACTIVE_PATH},
         "progress": {

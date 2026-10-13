@@ -89,6 +89,7 @@ class ControllerClient:
         scratch_dir: str,
         thread_cap: int,
         version: str,
+        machine_id: str | None = None,
     ) -> dict[str, Any]:
         """Register (or refresh) this node; returns the lease/heartbeat intervals."""
         body = self._request(
@@ -101,6 +102,7 @@ class ControllerClient:
                 "scratch_dir": scratch_dir,
                 "thread_cap": thread_cap,
                 "version": version,
+                "machine_id": machine_id,
             },
         )
         return body or {}

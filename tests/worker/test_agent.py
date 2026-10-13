@@ -70,7 +70,7 @@ def test_agent_registers_claims_and_completes(
     config = worker_config_factory(controller_url=server.base_url, token=TOKEN)
     output = Fingerprint(size_bytes=5, mtime_ns=1, digest="out")
     pipeline = StubPipeline(JobOutcome("complete", output=output))
-    agent = WorkerAgent(config, pipeline=pipeline)
+    agent = WorkerAgent(config, pipeline=pipeline, machine_id="node-a-host")
 
     assert agent.run(max_jobs=1) == 0
 
@@ -82,6 +82,7 @@ def test_agent_registers_claims_and_completes(
     entry = next(w for w in workers["workers"] if w["worker_id"] == config.worker_id)
     assert entry["online"] is True
     assert entry["roots"] == {"archive": str(config.roots["archive"])}
+    assert entry["machine_id"] == "node-a-host"
     assert entry["active"] is None
 
 

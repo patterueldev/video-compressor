@@ -20,6 +20,7 @@ from typing import Any
 
 from videocompressor import __version__
 from videocompressor.core.ffmpeg import EncodeProgress
+from videocompressor.core.machine import machine_identity
 from videocompressor.core.manifest import HEARTBEAT_INTERVAL_SECONDS
 from videocompressor.core.models import StopMode
 from videocompressor.worker.client import (
@@ -55,9 +56,11 @@ class WorkerAgent:
         client: ControllerClient | None = None,
         pipeline: JobPipeline | None = None,
         version: str = __version__,
+        machine_id: str | None = None,
     ) -> None:
         self.config = config
         self.version = version
+        self.machine_id = machine_id if machine_id is not None else machine_identity()
         self.client = client if client is not None else ControllerClient(
             config.controller_url, config.token
         )
@@ -88,6 +91,7 @@ class WorkerAgent:
             scratch_dir=str(self.config.scratch_dir),
             thread_cap=self.config.thread_cap,
             version=self.version,
+            machine_id=self.machine_id,
         )
         seconds = response.get("heartbeat_seconds")
         if (

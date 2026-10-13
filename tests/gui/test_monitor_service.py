@@ -39,6 +39,7 @@ def test_parse_workers_reads_state_clip_roots_and_progress():
     assert worker.online is True
     assert worker.last_seen == NOW - timedelta(seconds=12)
     assert worker.roots == {"archive": "/srv/archive"}
+    assert worker.machine_id == "homeserver"
     assert worker.stop_requested is False
     assert worker.stop_mode is None
     assert worker.active_root_id == "archive"
@@ -67,6 +68,7 @@ def test_parse_workers_tolerates_missing_and_malformed_fields():
     assert first.progress is None
     assert first.active_path is None
     assert first.last_seen is None
+    assert first.machine_id is None
     assert second.roots == {}
     assert second.last_seen is None
     assert parse_workers({"workers": "nope"}) == ()

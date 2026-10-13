@@ -85,6 +85,7 @@ class ControllerStore:
         scratch_dir: str | None = None,
         thread_cap: int = 2,
         version: str | None = None,
+        machine_id: str | None = None,
     ) -> WorkerRow:
         """Register ``worker_id`` (or refresh it) and clear any pending stop."""
         now = to_iso(self._clock())
@@ -92,15 +93,16 @@ class ControllerStore:
             self._conn.execute(
                 """
                 INSERT INTO workers (worker_id, name, roots_json, scratch_dir, thread_cap,
-                                     version, last_seen, stop_requested, stop_mode,
+                                     version, machine_id, last_seen, stop_requested, stop_mode,
                                      registered_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
                 ON CONFLICT(worker_id) DO UPDATE SET
                     name = excluded.name,
                     roots_json = excluded.roots_json,
                     scratch_dir = excluded.scratch_dir,
                     thread_cap = excluded.thread_cap,
                     version = excluded.version,
+                    machine_id = excluded.machine_id,
                     last_seen = excluded.last_seen,
                     stop_requested = 0,
                     stop_mode = NULL
@@ -112,6 +114,7 @@ class ControllerStore:
                     scratch_dir,
                     thread_cap,
                     version,
+                    machine_id,
                     now,
                     now,
                 ),
