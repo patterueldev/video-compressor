@@ -127,6 +127,9 @@ is simply not installed; `1` means the platform command failed (or the platform 
 | Logs | `~/Library/Logs/VideoCompressor/<id>.out.log` and `.err.log` | the journal: `journalctl --user -u videocompressor-worker-<id>.service` |
 | Restart | on failure, throttled to 30 s | `Restart=on-failure`, `RestartSec=30` |
 
+A clean operator stop (exit 0) is not a failure and does not restart the service; see the stop
+modes and the pickup procedure in [worker-runbook.md](worker-runbook.md).
+
 Notes:
 
 - The service runs as the logged-in user; no sudo is used or required. On a headless Linux host

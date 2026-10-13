@@ -69,12 +69,15 @@ Log lines go to stderr (`INFO` level): `registered worker … with controller �
 `settled: <disposition>` lines, progress warnings, and controller-unavailable retries. The
 container stack keeps bounded logs (`docker compose logs -f --tail=100 worker`).
 
-Stop semantics:
+Stop semantics (see "Safely stopping and picking up a node" for the operator procedure):
 
-- **Ctrl-C / SIGTERM / `docker compose stop`**: the active FFmpeg process is terminated, the
-  clip is requeued, and successful clips stay complete.
-- **GUI/monitor stop**: the same effect for the selected worker; the worker process exits (with
-  `restart: unless-stopped` the container comes back, so remove/stop the stack to keep it off).
+- **Ctrl-C / SIGTERM / `docker compose stop`**: stop now — the active FFmpeg process is
+  terminated, the clip is requeued, and the worker exits; successful clips stay complete.
+- **SIGUSR1** (macOS/Linux): stop after the current clip — the active job settles normally and
+  the worker exits without claiming another.
+- **GUI/monitor stop**: the same two modes for the selected node, "Stop now" and "Stop after
+  current"; either exits the worker process (with `restart: unless-stopped` the container comes
+  back, so remove/stop the stack to keep it off).
 - **`--once`** is for watched/scripted runs: it exits immediately when nothing is claimable.
 
 ## Service mode (macOS launchd, Linux systemd)
@@ -90,6 +93,48 @@ vc worker uninstall-service --config /path/to/worker.toml  # stop and remove
 Unit locations, logs, exit codes, `--dry-run`, the headless-host `loginctl enable-linger` note,
 and token materialization/rotation are in [install-runbook.md](install-runbook.md). The config
 file is the service's identity and must stay in place until the service is uninstalled.
+
+## Safely stopping and picking up a node
+
+To take a node away (for example a laptop that has to leave) without losing work, stop it with a
+mode and wait for it to exit:
+
+- **Stop after current (drain)** — the node finishes the clip it is processing, reports it
+  normally, and exits without claiming another. Nothing is requeued; use this for a safe pickup.
+- **Stop now (cancel)** — the node cancels the active clip (it is requeued and restarts from the
+  beginning later) and exits. Use this when the machine must go immediately.
+
+From the Monitor tab, select the node and press the matching button; the status column shows
+`draining…` or `stopping…` until the node exits. Both modes also stop an idle node. The request is
+persisted on the controller and delivered on the node's next heartbeat (within ~15 s); it survives
+a controller restart and clears when the node re-registers or when the operator presses **Resume**.
+
+Local control without the Monitor:
+
+```sh
+kill -USR1 <worker-pid>                                                  # drain: finish, then exit
+kill -TERM <worker-pid>                                                  # stop now: cancel, then exit
+systemctl --user kill -s SIGUSR1 videocompressor-worker-<id>.service    # drain a service node
+```
+
+A stop exits with code 0, and the installed service does not restart it (`Restart=on-failure`;
+launchd `SuccessfulExit: false`), so the node stays stopped until it is started again.
+
+Starting the node again afterwards:
+
+- App-managed local worker: press **Start** in the Monitor's local-worker strip (or **Save & apply**).
+- Installed service: re-run `vc worker install-service --config /path/to/worker.toml` (idempotent,
+  starts it), or `systemctl --user start videocompressor-worker-<id>.service` on Linux.
+- Foreground node: `VC_WORKER_TOKEN=… .venv/bin/vc worker --config /path/to/worker.toml` again.
+
+A pending stop clears when the node registers again, so a restarted node claims work normally. If
+a stop was requested but the node should keep working, press **Resume** in the Monitor before the
+node acts on it.
+
+Fleet rollout order for the stop modes: update the controller first (restart the app or
+`vc controller`), then the agents (`vc node install …` or `vc worker install-service …`). An agent
+that predates the mode contract keeps the old behavior: a stop cancels its active clip and the
+request clears when that clip settles; it cannot be stopped while idle.
 
 ## Remote bootstrap (`vc node`)
 
@@ -126,7 +171,10 @@ stance is in [security-notes.md](security-notes.md). Everything managed lives un
 
 ## Biasing the worker off under load
 
-- Full off: stop the worker (`docker compose stop` or Ctrl-C). The active job is requeued.
+- Full off, safe pickup: stop after the current clip (`SIGUSR1` or Monitor "Stop after current") —
+  the clip finishes, then the node exits.
+- Full off, immediately: stop now (`docker compose stop`, Ctrl-C, or Monitor "Stop now"). The
+  active job is requeued.
 - Live CPU trim (container): `docker update --cpus=1 <container>`, restore with `--cpus=2`.
 - Lighter config: set `thread_cap = 1` and recreate the worker; it cancels and requeues the
   active job.
