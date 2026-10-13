@@ -197,7 +197,7 @@ class FakeMonitorClient:
         self._event_pages = list(event_pages) if event_pages else [events_payload([])]
         self._summary = summary if summary is not None else summary_payload()
         self.event_calls: list[int | None] = []
-        self.stops: list[str] = []
+        self.stops: list[tuple[str, str]] = []
         self.resumes: list[str] = []
         self.enqueues: list[dict[str, Any]] = []
         self.enqueue_response: dict[str, Any] = {
@@ -226,8 +226,8 @@ class FakeMonitorClient:
             raise self.enqueue_error
         return self.enqueue_response
 
-    def stop_worker(self, worker_id: str) -> None:
-        self.stops.append(worker_id)
+    def stop_worker(self, worker_id: str, *, mode: str = "cancel") -> None:
+        self.stops.append((worker_id, mode))
 
     def resume_worker(self, worker_id: str) -> None:
         self.resumes.append(worker_id)
@@ -246,7 +246,7 @@ class FakeSession:
         self._snapshot = snapshot if snapshot is not None else make_snapshot()
         self.stop_error = stop_error
         self.resume_error = resume_error
-        self.stops: list[str] = []
+        self.stops: list[tuple[str, str]] = []
         self.resumes: list[str] = []
         self.snapshot_calls = 0
 
@@ -254,10 +254,10 @@ class FakeSession:
         self.snapshot_calls += 1
         return self._snapshot
 
-    def stop_worker(self, worker_id: str) -> None:
+    def stop_worker(self, worker_id: str, *, mode: str = "cancel") -> None:
         if self.stop_error is not None:
             raise self.stop_error
-        self.stops.append(worker_id)
+        self.stops.append((worker_id, mode))
 
     def resume_worker(self, worker_id: str) -> None:
         if self.resume_error is not None:

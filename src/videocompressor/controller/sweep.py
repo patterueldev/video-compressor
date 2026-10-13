@@ -68,7 +68,11 @@ class LeaseSweepMixin:
                     self._event(
                         "warning", f"worker {row.worker_id} offline", worker_id=row.worker_id
                     )
-                if row.stop_requested and self._find_active_clip(row.worker_id) is None:
+                if row.stop_requested and not self._is_online(row, now):
+                    # Only dead registrations are cleaned up here: a pending
+                    # stop for an online worker must survive until its next
+                    # heartbeat (at most 15 s) delivers it, or an idle stop
+                    # would be dropped before the worker ever sees it.
                     self.store.set_stop_requested(row.worker_id, False)
 
     def _sweep_loop(self) -> None:

@@ -40,6 +40,7 @@ def test_parse_workers_reads_state_clip_roots_and_progress():
     assert worker.last_seen == NOW - timedelta(seconds=12)
     assert worker.roots == {"archive": "/srv/archive"}
     assert worker.stop_requested is False
+    assert worker.stop_mode is None
     assert worker.active_root_id == "archive"
     assert worker.active_path == ACTIVE_PATH
     assert worker.progress_at == NOW
@@ -69,6 +70,19 @@ def test_parse_workers_tolerates_missing_and_malformed_fields():
     assert second.roots == {}
     assert second.last_seen is None
     assert parse_workers({"workers": "nope"}) == ()
+
+
+def test_parse_workers_reads_the_stop_mode():
+    workers = parse_workers(
+        workers_payload(
+            worker_payload("a", stop_requested=True, stop_mode="drain"),
+            worker_payload("b", stop_requested=True, stop_mode=7),
+            worker_payload("c", stop_requested=False, stop_mode="cancel"),
+        )
+    )
+    assert workers[0].stop_mode == "drain"
+    assert workers[1].stop_mode is None  # a mistyped value degrades, never raises
+    assert workers[2].stop_mode == "cancel"
 
 
 def test_parse_events_reads_sequence_and_next():
@@ -189,6 +203,7 @@ def test_session_delegates_stop_and_resume():
     client = FakeMonitorClient()
     session = MonitorSession(client)
     session.stop_worker("homeserver")
+    session.stop_worker("homeserver", mode="drain")
     session.resume_worker("homeserver")
-    assert client.stops == ["homeserver"]
+    assert client.stops == [("homeserver", "cancel"), ("homeserver", "drain")]
     assert client.resumes == ["homeserver"]

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from videocompressor.controller.constants import EVENTS_PAGE_LIMIT, MAX_BODY_BYTES
-from videocompressor.controller.protocol import ControllerError, _require_str
+from videocompressor.controller.protocol import ControllerError, _require_str, _stop_mode
 
 if TYPE_CHECKING:
     from videocompressor.controller.server import ControllerServer
@@ -106,7 +106,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         if name == "heartbeat":
             return 200, controller.heartbeat(captured["worker_id"], payload)
         if name == "stop":
-            controller.stop_worker(captured["worker_id"])
+            controller.stop_worker(captured["worker_id"], mode=_stop_mode(payload))
             return 204, None
         if name == "resume":
             controller.resume_worker(captured["worker_id"])

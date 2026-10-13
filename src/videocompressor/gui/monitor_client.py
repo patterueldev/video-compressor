@@ -59,9 +59,13 @@ class HttpControllerClient:
         """``POST /jobs``: enqueue explicit files for direct conversions (issue #39)."""
         return self._request("POST", "/jobs", payload) or {}
 
-    def stop_worker(self, worker_id: str) -> None:
-        """``POST /workers/{id}/stop``: ask the worker to terminate its active job."""
-        self._request("POST", f"/workers/{_quote(worker_id)}/stop", {})
+    def stop_worker(self, worker_id: str, *, mode: str = "cancel") -> None:
+        """``POST /workers/{id}/stop``: ask the worker to stop with ``mode``.
+
+        ``cancel`` stops now (the active job is requeued); ``drain`` finishes
+        the current clip and then exits. Both modes also apply to an idle node.
+        """
+        self._request("POST", f"/workers/{_quote(worker_id)}/stop", {"mode": mode})
 
     def resume_worker(self, worker_id: str) -> None:
         """``POST /workers/{id}/resume``: clear a pending stop request."""

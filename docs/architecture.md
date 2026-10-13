@@ -43,6 +43,7 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   `nodes` (per-node entries: SSH target, root mappings; issue #54).
 - `controller`: `server` (facade), `http` (HTTP plumbing),
   `registry`/`jobs`/`enqueue`/`sweep` (mixins), `store` (SQLite bookkeeping),
+  `store_schema` (store DDL, migration, and row codecs; issue #74),
   `memory_manifest` (in-memory double/fallback), `protocol` (payload rules), `constants`.
 - `gui`: `app`, `main_window`, `drop_zone`, `roots_panel`, `templates_panel`, `clip_tables`, and
   `scan_runner` widgets plus the pure Python `state` and `scan_service` (issue #8) and the job
@@ -56,7 +57,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   with the issue #70 additions `local_worker_marker` (stop-state persistence),
   `local_worker_processes` (process-table stale-child sweep), and `shutdown_signals`
   (SIGTERM/SIGINT quit).
-- `worker`: `agent` (register/heartbeat/claim loop and stop), `client` (controller HTTP v1),
+- `worker`: `agent` (register/heartbeat/claim loop and the stop modes: cancel vs drain),
+  `client` (controller HTTP v1),
   `outcome` (per-job result type), `pipeline` (per-job copy → encode → validate → replace),
   `destination` (destination decode/resolve/place/delete), `transfer` (pilot delivery and
   replacement confirm), `config` (per-node TOML), `scratch` (local job dirs),
@@ -278,8 +280,11 @@ over the local network.
   grace gets `409` and discards its local work (the existing lease-conflict behavior).
 - The Monitor's online/offline flip is decoupled from a long grace (issue #75): a worker silent
   for `min(orphan_grace_seconds, 90)` counts as offline even while its job lease is still held.
-- Stop instructs the worker to terminate the current FFmpeg process; states stay durable and a
-  later resume requeues the clip.
+- Stop instructs the worker with a mode (issue #74): `cancel` terminates the current FFmpeg
+  process (states stay durable and a later resume requeues the clip) and exits the node;
+  `drain` lets the current clip settle and exits the node without claiming again. Both modes
+  also exit an idle node cleanly, and a clean exit never triggers the installed service's
+  restart policy.
 
 ### Endpoints
 
@@ -305,7 +310,11 @@ intervals.
 #### `POST /api/v1/workers/{worker_id}/heartbeat`
 
 Renews the worker lease and, when `active` is present, the job lease; carries progress for the
-GUI. `"stop": true` in the response tells the worker to terminate the active job.
+GUI. `"stop": true` tells the worker to stop; `"stop_mode"` says how (issue #74): `cancel`
+terminates the active job (it is requeued) and the node exits its claim loop, `drain` lets the
+active job settle and the node exits without claiming again. Both modes also exit an idle node,
+and a missing or null `stop_mode` means `cancel`, so an agent that predates the mode contract
+keeps its cancel-only behavior.
 
 ```json
 // request
@@ -321,7 +330,7 @@ GUI. `"stop": true` in the response tells the worker to terminate the active job
   }
 }
 // response 200
-{"stop": false, "lease_seconds": 300}
+{"stop": false, "stop_mode": null, "lease_seconds": 300}
 ```
 
 The optional `progress.phase` (`copied`, `encoding`, `validated`, `transferring`, `replacing`)
@@ -476,8 +485,24 @@ consumes the source through the verified swap.
 
 #### `POST /api/v1/workers/{worker_id}/stop`
 
-Request that the worker terminate its active job (same effect as the heartbeat `stop` flag).
-`204`.
+Request a node stop with a chosen mode (issue #74); delivered on the worker's next heartbeat.
+
+```json
+// request (the body is optional; the default is stop now)
+{"mode": "drain"}
+// response 204
+```
+
+- `mode` — optional; `cancel` (default) stops now: the active job is cancelled (requeued, as
+  before) and the node exits its claim loop. `drain` stops after the current clip: the active job
+  settles normally and the node exits without claiming again. Both modes also apply to an idle
+  node. Any other value is `400 bad_request`.
+- The request is durable: it is persisted on the worker's registry row (survives a controller
+  restart), delivered on every heartbeat until it is acted on, and cleared by `resume`, by the
+  worker re-registering, or when its job settles (the pre-#74 clear-on-settle behavior).
+- A worker that heartbeats without the clip it still holds gets that clip requeued and the stop
+  consumed ("stopped without reporting"); an idle worker keeps the pending stop so the heartbeat
+  can deliver it.
 
 #### `GET /api/v1/events?after=<sequence>`
 
@@ -498,9 +523,11 @@ most recent events (bounded) are returned.
 
 Monitoring and stop/resume additions; every v1 payload above stays valid.
 
-- `POST /api/v1/workers/{worker_id}/resume` — clears a pending stop request. `204`.
+- `POST /api/v1/workers/{worker_id}/resume` — clears a pending stop request (either mode).
+  `204`.
 - `GET /api/v1/workers` — registry snapshot for monitors: worker id, name, online, last seen,
-  root mappings, stop flag, active clip, and the latest heartbeat progress.
+  root mappings, stop flag and `stop_mode` (`cancel`/`drain`/null), active clip, and the latest
+  heartbeat progress.
 - `GET /api/v1/summary?run_id=<id>` — run summary counts (completed, skipped, failed,
   review-needed), from a finished run or computed live.
 

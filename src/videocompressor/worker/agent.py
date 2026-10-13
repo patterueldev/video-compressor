@@ -3,10 +3,13 @@
 The agent owns the node's lifecycle: it registers with the controller, keeps a
 15 s heartbeat thread (renewing the worker lease and, while a job runs, the job
 lease and progress), claims one queued clip at a time, and reports the terminal
-state. A stop command (heartbeat ``stop`` flag) cancels only the active job; a
-SIGTERM/SIGINT request cancels the job and exits the loop. Cancelling kills the
-active FFmpeg process through the pipeline's stop event and discards the local
-work; the clip is requeued and restarts from the beginning later.
+state. A heartbeat stop carries a mode (issue #74): ``cancel`` cancels the
+active job and exits the loop, ``drain`` lets the active job settle and exits
+without claiming again; both also exit an idle node, and a missing mode means
+cancel. SIGTERM/SIGINT cancels the job and exits (``request_stop``); SIGUSR1
+requests a drain. Cancelling kills the active FFmpeg process through the
+pipeline's stop event and discards the local work; the clip is requeued and
+restarts from the beginning later.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from typing import Any
 from videocompressor import __version__
 from videocompressor.core.ffmpeg import EncodeProgress
 from videocompressor.core.manifest import HEARTBEAT_INTERVAL_SECONDS
+from videocompressor.core.models import StopMode
 from videocompressor.worker.client import (
     ClaimedJob,
     ControllerAuthError,
@@ -59,6 +63,7 @@ class WorkerAgent:
         )
         self._shutdown = threading.Event()
         self._cancel_job = threading.Event()
+        self._drain = threading.Event()
         self._heartbeat_stop = threading.Event()
         self._wake_heartbeat = threading.Event()
         self._progress_lock = threading.Lock()
@@ -113,6 +118,9 @@ class WorkerAgent:
         processed = 0
         try:
             while not self._shutdown.is_set() and (max_jobs is None or processed < max_jobs):
+                if self._drain.is_set():
+                    _log.info("draining: exiting without claiming another job")
+                    break
                 job = self._try_claim()
                 if job is None:
                     if max_jobs is not None:
@@ -132,6 +140,15 @@ class WorkerAgent:
         self._shutdown.set()
         self._cancel_job.set()
         self._wake_heartbeat.set()
+
+    def request_drain(self) -> None:
+        """Finish the active job normally, then exit; exit immediately when idle."""
+        self._drain.set()
+        self._wake_heartbeat.set()
+        with self._progress_lock:
+            idle = self._active is None
+        if idle:
+            self._shutdown.set()
 
     # -- claiming and running ---------------------------------------------
 
@@ -247,9 +264,16 @@ class WorkerAgent:
             _log.warning("controller unreachable during heartbeat: %s", exc)
         else:
             if response.get("stop"):
-                _log.info("stop requested for %s", self.config.worker_id)
-                if active_job is not None:
+                mode = response.get("stop_mode") or StopMode.CANCEL
+                if mode == StopMode.DRAIN:
+                    _log.info("drain requested for %s", self.config.worker_id)
+                    self._drain.set()
+                    if active_job is None:
+                        self._shutdown.set()
+                else:
+                    _log.info("stop requested for %s", self.config.worker_id)
                     self._cancel_job.set()
+                    self._shutdown.set()
 
     def _reregister_quietly(self) -> None:
         try:

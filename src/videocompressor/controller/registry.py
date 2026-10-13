@@ -30,7 +30,12 @@ from videocompressor.controller.protocol import (
 )
 from videocompressor.controller.store import WorkerRow
 from videocompressor.core.manifest import LeaseError
-from videocompressor.core.models import JobState
+from videocompressor.core.models import JobState, StopMode
+
+
+def _stop_mode_value(row: WorkerRow) -> str:
+    """Wire value of a pending stop: a legacy null mode means cancel."""
+    return (row.stop_mode or StopMode.CANCEL).value
 
 
 class WorkerRegistryMixin:
@@ -65,7 +70,7 @@ class WorkerRegistryMixin:
             }
 
     def heartbeat(self, worker_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-        """Renew the worker lease and the active job lease; returns the stop flag."""
+        """Renew the worker lease and the active job lease; returns the stop order."""
         with self._lock:
             row = self.store.touch_worker(worker_id)
             if row is None:
@@ -105,11 +110,18 @@ class WorkerRegistryMixin:
                 self._apply_phase(record, progress)
             else:
                 self._progress.pop(worker_id, None)
-                if row.stop_requested:
+                if row.stop_requested and self._find_active_clip(worker_id) is not None:
+                    # The worker heartbeats without the clip it still holds, so
+                    # it dropped the job without reporting: requeue it and
+                    # consume the stop. A worker with nothing to drop keeps the
+                    # request pending so this heartbeat can deliver it (an idle
+                    # stop must not be swallowed).
                     self._ack_stop_without_report(worker_id)
-            current = self.store.get_worker(worker_id)
-            stop = bool(current.stop_requested) if current is not None else False
-            return {"stop": stop, "lease_seconds": self.lease_ttl_seconds}
+            return {
+                "stop": row.stop_requested,
+                "stop_mode": _stop_mode_value(row) if row.stop_requested else None,
+                "lease_seconds": self.lease_ttl_seconds,
+            }
 
     def workers(self) -> dict[str, Any]:
         """Registry snapshot with online state, active clip, and latest progress."""
@@ -130,6 +142,7 @@ class WorkerRegistryMixin:
                         "thread_cap": row.thread_cap,
                         "version": row.version,
                         "stop_requested": row.stop_requested,
+                        "stop_mode": _stop_mode_value(row) if row.stop_requested else None,
                         "active": (
                             {"root_id": active.root_id, "relative_path": active.relative_path}
                             if active is not None
@@ -141,27 +154,32 @@ class WorkerRegistryMixin:
                 )
             return {"workers": entries}
 
-    def stop_worker(self, worker_id: str) -> None:
-        """Ask a worker to terminate its active job at the next heartbeat."""
+    def stop_worker(self, worker_id: str, *, mode: StopMode = StopMode.CANCEL) -> None:
+        """Record a node stop request for delivery on the next heartbeat.
+
+        ``cancel`` stops now (cancelling the active job, which requeues);
+        ``drain`` lets the active job settle and exits without claiming again.
+        Both modes also apply to an idle node, and a later request with another
+        mode replaces a pending one.
+        """
         with self._lock:
             row = self.store.get_worker(worker_id)
             if row is None:
                 raise _unknown_worker(worker_id)
+            if row.stop_requested and row.stop_mode == mode:
+                return  # already pending, nothing new to deliver
             active = self._find_active_clip(worker_id)
-            if active is None:
-                self._event(
-                    "info", f"stop requested for {worker_id}: no active job", worker_id=worker_id
-                )
-                return
-            if not row.stop_requested:
-                self.store.set_stop_requested(worker_id, True)
-                self._event(
-                    "info",
-                    f"stop requested for {worker_id} (active: {active.relative_path})",
-                    worker_id=worker_id,
-                    root_id=active.root_id,
-                    relative_path=active.relative_path,
-                )
+            self.store.set_stop_requested(worker_id, True, mode=mode)
+            detail = (
+                f"active: {active.relative_path}" if active is not None else "no active job"
+            )
+            self._event(
+                "info",
+                f"stop requested for {worker_id} ({mode.value}; {detail})",
+                worker_id=worker_id,
+                root_id=active.root_id if active is not None else None,
+                relative_path=active.relative_path if active is not None else None,
+            )
 
     def resume_worker(self, worker_id: str) -> None:
         """Clear a pending stop request."""

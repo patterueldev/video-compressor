@@ -192,16 +192,31 @@ def _report_status(status: ServiceStatus, *, as_json: bool) -> int:
 
 
 def _install_signal_handlers(agent: WorkerAgent) -> Callable[[], None]:
-    """Install SIGTERM/SIGINT handlers that stop the agent; return a restore hook."""
+    """Install the stop (SIGTERM/SIGINT) and drain (SIGUSR1) handlers.
+
+    SIGTERM/SIGINT cancel the active job and exit; SIGUSR1 (where the platform
+    has it) finishes the current clip and exits. Returns a restore hook.
+    """
     previous: dict[int, object] = {}
 
-    def handle(signum: int, frame: object) -> None:
+    def handle_stop(signum: int, frame: object) -> None:
         agent.request_stop()
 
-    for signum in (signal.SIGINT, signal.SIGTERM):
+    def handle_drain(signum: int, frame: object) -> None:
+        agent.request_drain()
+
+    handlers: list[tuple[int, Callable[[int, object], None]]] = [
+        (signal.SIGINT, handle_stop),
+        (signal.SIGTERM, handle_stop),
+    ]
+    sigusr1 = getattr(signal, "SIGUSR1", None)
+    if sigusr1 is not None:
+        handlers.append((sigusr1, handle_drain))
+
+    for signum, handler in handlers:
         try:
             previous[signum] = signal.getsignal(signum)
-            signal.signal(signum, handle)
+            signal.signal(signum, handler)
         except (ValueError, OSError):  # not running in the main thread
             pass
 
