@@ -36,6 +36,7 @@ from videocompressor.core.records import (
     DestinationRecord,
     ExistingOutput,
     classify_existing_output,
+    legacy_meta_path_for,
     meta_path_for,
     read_record,
     write_record,
@@ -243,25 +244,38 @@ def test_record_round_trip_and_degraded_reads(tmp_path, fingerprint_full):
 def test_cleanup_destination_is_scoped_and_idempotent(tmp_path, fingerprint_full):
     source, _, destination = _prepare(tmp_path)
     _seed_output(destination, source, fingerprint_full)
-    destination.unlink()  # the record is now stale (its output is gone)
+    legacy = legacy_meta_path_for(destination)
+    legacy.write_bytes(meta_path_for(destination).read_bytes())
+    destination.unlink()  # both records are now stale (their output is gone)
     leftover = temp_path_for(destination, "old-attempt")
     leftover.write_bytes(b"staged bytes")
-    partial = destination.parent / f".{CLIP}.vc-meta.json.abc.tmp"
+    legacy_partial = destination.parent / f".{CLIP}.vc-meta.json.abc.tmp"
+    legacy_partial.write_bytes(b"partial")
+    partial = meta_path_for(destination).parent / f".{CLIP}.vc-meta.json.def.tmp"
     partial.write_bytes(b"partial")
     foreign = destination.parent / "other-file.mp4"
     foreign.write_bytes(b"other")
 
     removed = cleanup_destination(destination)
 
-    assert set(removed) == {leftover, partial, meta_path_for(destination)}
+    assert set(removed) == {
+        leftover,
+        legacy_partial,
+        partial,
+        meta_path_for(destination),
+        legacy,
+    }
     assert not meta_path_for(destination).exists()
+    assert not legacy.exists()
     assert foreign.read_bytes() == b"other"
 
-    # an existing output plus its record survive cleanup, and a second run is a no-op
+    # an existing output plus its records survive cleanup, and a second run is a no-op
     record = _seed_output(destination, source, fingerprint_full)
+    legacy.write_bytes(meta_path_for(destination).read_bytes())
     assert cleanup_destination(destination) == ()
     assert destination.read_bytes() == OUTPUT
     assert read_record(destination) == record
+    assert legacy.is_file()
 
 
 def test_classify_existing_output_skip_and_collisions(tmp_path, fingerprint_full):

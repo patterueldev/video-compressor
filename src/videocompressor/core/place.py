@@ -1,6 +1,7 @@
 """Destination placement protocol (issue #40): copy a validated local output to an
 explicit destination, verify the copy by read-back, validate it at the destination,
-record it beside the output, and delete the source only after all of that succeeded.
+record it in the destination's hidden ``.vc-records/`` folder, and delete the source
+only after all of that succeeded.
 
 Same-folder jobs keep using :mod:`videocompressor.core.replace` (the verified swap);
 this module covers the custom-destination part of the convert flow. Everything
@@ -13,7 +14,8 @@ leave a final output without its record):
 
 1. stage ``<output name>.vc-tmp.<job_id>`` and verify it by full read-back SHA-256;
 2. validate the staged file at the destination (injected ``validate`` callable);
-3. write ``<output name>.vc-meta.json`` atomically (:mod:`videocompressor.core.records`);
+3. write ``.vc-records/<output name>.vc-meta.json`` atomically
+   (:mod:`videocompressor.core.records`);
 4. rename the temp into place;
 5. confirm size + sampled digest of the placed file;
 6. ``delete_source_verified`` removes the source (only when the caller asks).
@@ -37,7 +39,9 @@ from videocompressor.core.fingerprint import fingerprint_confirms, fingerprint_f
 from videocompressor.core.models import Fingerprint
 from videocompressor.core.records import (
     META_SUFFIX,
+    RECORDS_DIR,
     DestinationRecord,
+    legacy_meta_path_for,
     meta_path_for,
     write_record,
 )
@@ -140,7 +144,12 @@ def temp_path_for(output_path: Path, job_id: str) -> Path:
 
 
 def find_destination_artifacts(output_path: Path) -> tuple[Path, ...]:
-    """Find staging temps and partial record files for ``output_path``."""
+    """Find staging temps and partial record files for ``output_path``.
+
+    Staging temps live beside the output; partial record writes live in the
+    hidden ``.vc-records/`` folder, with legacy partials beside the output
+    found as well so older crashes are still cleaned up.
+    """
     parent = output_path.parent
     if not parent.is_dir():
         return ()
@@ -154,6 +163,15 @@ def find_destination_artifacts(output_path: Path) -> tuple[Path, ...]:
             artifacts.append(entry)
         elif entry.name.startswith(meta_prefix) and entry.name.endswith(".tmp"):
             artifacts.append(entry)
+    records_dir = parent / RECORDS_DIR
+    if records_dir.is_dir():
+        for entry in sorted(records_dir.iterdir()):
+            if (
+                entry.is_file()
+                and entry.name.startswith(meta_prefix)
+                and entry.name.endswith(".tmp")
+            ):
+                artifacts.append(entry)
     return tuple(artifacts)
 
 
@@ -161,17 +179,17 @@ def cleanup_destination(output_path: Path) -> tuple[Path, ...]:
     """Remove this clip's leftover artifacts; returns the removed paths.
 
     Idempotent and scoped to ``output_path``: staging temps and partial record
-    writes are always removed, the record is removed only when its output file is
-    absent, and the output itself plus foreign files are never touched.
+    writes are always removed, records (new or legacy) only when their output
+    file is absent, and the output itself plus foreign files are never touched.
     """
     removed: list[Path] = []
     for artifact in find_destination_artifacts(output_path):
         if _try_unlink(artifact):
             removed.append(artifact)
     if not output_path.is_file():
-        meta = meta_path_for(output_path)
-        if meta.exists() and _try_unlink(meta):
-            removed.append(meta)
+        for stale in (meta_path_for(output_path), legacy_meta_path_for(output_path)):
+            if _try_unlink(stale):
+                removed.append(stale)
     return tuple(removed)
 
 
@@ -270,7 +288,7 @@ def place_output(
     except OSError as exc:
         temp_path.unlink(missing_ok=True)
         raise RecordWriteError(
-            f"could not write the destination record beside {output_path}: {exc}"
+            f"could not write the destination record for {output_path}: {exc}"
         ) from exc
     if on_step is not None:
         on_step(PLACE_RECORD_WRITTEN)

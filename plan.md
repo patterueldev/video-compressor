@@ -110,17 +110,19 @@ convert flow processes the files the operator selected.
     the replacement is readable, then delete the backup.
   - **A registered output root or custom folder** (destination placement): stage the output
     beside the destination file with the same directory, verify it by full read-back, validate it
-    at the destination, write the completion record (a `.vc-meta.json` sidecar) before the
-    rename, rename the temporary file into place, and confirm the placed file. The source is
-    deleted only when the job asked for it — one atomic delete, after the placed output
-    validated and was recorded.
+    at the destination, write the completion record (`.vc-records/<name>.vc-meta.json` inside the
+    destination folder) before the rename, rename the temporary file into place, and confirm the
+    placed file. The source is deleted only when the job asked for it — one atomic delete, after
+    the placed output validated and was recorded.
   - If any step fails, preserve the original or backup so the source can be restored.
 - Before any replacement or deletion, confirm the source still matches the fingerprint captured
   when the job was claimed. If another process changed it, do not overwrite or delete it; return
   the job to review.
 - An existing destination file is skipped only when its completion record names this clip, the
   source fingerprint still confirms the claim, the file still matches the recorded output
-  fingerprint, and validation passes. Anything else occupying the destination path is a collision
+  fingerprint, and validation passes. Records live in a hidden `.vc-records/` folder inside the
+  destination directory; a record written beside the output by an older version is still honored
+  as a fallback. Anything else occupying the destination path is a collision
   and goes to review — never a silent overwrite.
 - Remove local scratch files and pass logs after a successful conversion. Discard incomplete local
   encodes on the next run and restart that clip from the beginning.
@@ -149,8 +151,9 @@ present if the source had audio. Validate at the destination before deleting a s
 recoverable backup until the replacement is confirmed readable at the original path; if the
 filesystem cannot provide a safe same-filesystem rename, use a copy-and-verify replacement
 procedure with recovery state. Temporary artifacts (`.vc-tmp.<job_id>`, `.vc-backup.<job_id>`,
-and `.vc-meta.json` records) are named per attempt so concurrent jobs cannot collide and recovery
-can prove the source or output state. Each run gets a separate log and a summary of completed,
+and the `.vc-records/` `.vc-meta.json` records) are named per attempt so concurrent jobs cannot
+collide and recovery can prove the source or output state. Each run gets a separate log and a
+summary of completed,
 skipped, failed, and review-needed clips.
 
 ## Acceptance

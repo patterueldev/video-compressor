@@ -225,14 +225,17 @@ folder on the node, or the source's own folder (which is the verified swap above
 
 1. stage `<clip name>.vc-tmp.<job_id>` beside the destination file, verify it by full read-back
    SHA-256, and validate it at the destination with the full validator;
-2. write `<clip name>.vc-meta.json` (`core/records.py`) atomically *before* the rename, so a
-   crash can never leave a final output without its record;
+2. write `<clip dir>/.vc-records/<clip name>.vc-meta.json` (`core/records.py`) atomically
+   *before* the rename, so a crash can never leave a final output without its record;
 3. rename the temp into place and confirm the placed file by size + sampled digest;
 4. delete the source only when the job asked for it: one atomic unlink, only after the placed
    output validated and was recorded, and only while the source still matches the fingerprint
    captured at claim (`delete_source_verified`).
 
-The record ties the output to the clip identity (`root_id` + archive-relative path + file name)
+Records live in a hidden `.vc-records/` folder inside the destination directory (issue #78);
+`read_record` tries that location first and falls back to a record written beside the output by
+an earlier version, so an existing destination is never force-migrated. The record ties the
+output to the clip identity (`root_id` + archive-relative path + file name)
 and to the source fingerprint captured at claim. An existing destination file is **skipped**
 only when its record names the clip, the source fingerprint still confirms the claim, the file
 still matches the recorded output fingerprint, and the full validation passes; anything else

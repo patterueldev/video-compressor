@@ -18,7 +18,7 @@ from fixtures.worker import CLIP, make_job
 from videocompressor.core.ffmpeg import run_two_pass_encode
 from videocompressor.core.fingerprint import fingerprint_file
 from videocompressor.core.probe import probe_media
-from videocompressor.core.records import read_record
+from videocompressor.core.records import meta_path_for, read_record
 from videocompressor.worker.pipeline import JobPipeline, PipelineSeams
 from videocompressor.worker.scratch import jobs_root
 
@@ -84,6 +84,8 @@ def assert_placed_output(path: Path) -> None:
     assert any(stream.codec_type == "audio" for stream in facts.streams)
     record = read_record(path)
     assert record is not None and record.output == fingerprint_file(path)
+    assert meta_path_for(path).is_file()
+    assert not path.with_name(path.name + ".vc-meta.json").exists()
 
 
 def test_destination_keep_originals_end_to_end(worker_config_factory, tmp_path):
