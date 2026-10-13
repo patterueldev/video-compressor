@@ -4,8 +4,11 @@ The panel is a thin rendering layer over :mod:`videocompressor.gui.convert_servi
 (pure selection and payload rules) and the controller client (``POST /jobs``,
 issue #39). Validating the destination inline and blocking Start keeps the
 pipeline-refused combinations out: a same-folder output replaces the source, so
-the delete option is forced on and explained, and a custom folder resolves
-through the registered roots only.
+the delete option is forced on and explained. Issue #82 removes the
+pre-registration ceremony: dropped or picked folders outside the registered
+roots are registered automatically (input at add time, a custom output folder
+on Start; see :mod:`videocompressor.gui.root_service`), and the enqueue summary
+surfaces configured nodes whose mapping does not cover a root in the batch.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from videocompressor.core.models import Destination
 from videocompressor.gui.convert_destination import DestinationForm
 from videocompressor.gui.convert_drop import ConvertDropZone
 from videocompressor.gui.convert_service import (
+    MODE_CUSTOM_FOLDER,
     MODE_SAME_FOLDER,
     AddOutcome,
     ConvertSelection,
@@ -44,6 +48,14 @@ from videocompressor.gui.convert_service import (
     effective_delete_original,
 )
 from videocompressor.gui.monitor_client import MonitorUnavailable, describe_monitor_error
+from videocompressor.gui.root_service import (
+    format_node_warning,
+    missing_node_roots,
+    register_roots_for_paths,
+    registration_note,
+    resolve_destination,
+    used_root_ids,
+)
 from videocompressor.gui.state import format_bytes
 
 __all__ = ["ConvertPanel"]
@@ -60,11 +72,15 @@ class ConvertPanel(QWidget):
     """The convert cockpit: pending list, destination, options, and Start."""
 
     enqueued = Signal(int)  # newly queued clips; emitted only when > 0
+    roots_changed = Signal()  # a folder was auto-registered and persisted
 
-    def __init__(self, client, config: AppConfig, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, client, config: AppConfig, config_path: Path, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.client = client
         self.config = config
+        self.config_path = config_path
         self.selection = ConvertSelection(lambda: self.config.roots)
         self._delete_choice = False
         self._last_dir = Path.home()
@@ -136,19 +152,31 @@ class ConvertPanel(QWidget):
         self._revalidate()
 
     def add_paths(self, paths: Iterable[Path]) -> None:
-        """Append picked paths to the pending list and refresh the status lines."""
+        """Append picked paths to the pending list and refresh the status lines.
+
+        Folders outside the registered roots are registered automatically
+        (issue #82) before the selection resolves, so a drop never dead-ends.
+        """
         items = list(paths)
         if items:
             first = Path(items[0]).expanduser()
             self._last_dir = first if first.is_dir() else first.parent
+        registration = register_roots_for_paths(
+            self.config, items, config_path=self.config_path
+        )
+        if registration.registered:
+            self.destination.refresh()
         outcome = self.selection.add_paths(items)
         self._refresh_table()
         self._update_labels()
-        message = _add_summary(outcome)
-        if message is None and items and outcome.added == 0:
+        parts = [_add_summary(outcome), registration_note(registration)]
+        message = ", ".join(part for part in parts if part)
+        if not message and items and outcome.added == 0:
             message = "no video files found"
-        if message is not None:
+        if message:
             self.message_label.setText(message)
+        if registration.registered:
+            self.roots_changed.emit()
         self._revalidate()
 
     def open_files(self) -> None:
@@ -174,11 +202,29 @@ class ConvertPanel(QWidget):
         self._revalidate()
 
     def start(self) -> None:
-        """Validate the form and enqueue the ready entries through the controller API."""
-        destination, problem = self._destination()
-        if problem is not None:
-            self._fail(problem)
+        """Validate the form and enqueue the ready entries through the controller API.
+
+        A custom output folder outside the registered roots is registered on
+        use (issue #82); the summary then names the new root and any configured
+        node whose mapping does not cover a root in the batch.
+        """
+        mode, root_id, subfolder, folder = self.destination.fields()
+        resolution = resolve_destination(
+            self.config,
+            mode=mode,
+            root_id=root_id,
+            subfolder=subfolder,
+            folder=folder,
+            config_path=self.config_path,
+        )
+        if resolution.problem is not None:
+            self._fail(resolution.problem)
             return
+        destination = resolution.destination
+        assert destination is not None  # guaranteed once ``problem`` is None
+        if resolution.registered is not None:
+            self.destination.refresh()
+            self.roots_changed.emit()
         ready = self.selection.ready_entries()
         if not ready:
             self._fail("select at least one video under a registered root")
@@ -187,10 +233,7 @@ class ConvertPanel(QWidget):
         if template_id not in self.config.templates:
             self._fail("choose a processing template")
             return
-        assert destination is not None  # guaranteed once ``problem`` is None
-        delete_original = effective_delete_original(
-            self.current_mode(), self.delete_checkbox.isChecked()
-        )
+        delete_original = effective_delete_original(mode, self.delete_checkbox.isChecked())
         payload = build_enqueue_payload(
             ready, destination, template_id=template_id, delete_original=delete_original
         )
@@ -201,10 +244,20 @@ class ConvertPanel(QWidget):
             return
         outcome = self.selection.apply_enqueue_result(body)
         self._refresh_table()
-        self.message_label.setText(
+        notes: list[str] = []
+        if resolution.registered is not None:
+            root = resolution.registered
+            notes.append(f"registered {root.name!r} ({root.id}) as an output root")
+        note = format_node_warning(
+            missing_node_roots(self.config.nodes, used_root_ids(ready, destination))
+        )
+        if note is not None:
+            notes.append(note)
+        summary = (
             f"queued {outcome.queued} of {outcome.total} clips"
             f" ({outcome.skipped} skipped, {outcome.rejected} rejected)"
         )
+        self.message_label.setText("; ".join([summary, *notes]))
         if outcome.queued > 0:
             self.enqueued.emit(outcome.queued)
 
@@ -260,12 +313,21 @@ class ConvertPanel(QWidget):
 
     def _update_start_enabled(self) -> None:
         destination, problem = self._destination()
+        resolvable = destination is not None and problem is None
+        if not resolvable:
+            resolvable = self._custom_folder_registrable()
         self.start_button.setEnabled(
-            destination is not None
-            and problem is None
+            resolvable
             and bool(self.selection.ready_entries())
             and self.template_combo.currentText() in self.config.templates
         )
+
+    def _custom_folder_registrable(self) -> bool:
+        """Whether Start may register the picked custom folder on use (#82)."""
+        if self.current_mode() != MODE_CUSTOM_FOLDER:
+            return False
+        text = self.folder_edit.text().strip()
+        return bool(text) and Path(text).expanduser().is_dir()
 
     def _on_delete_toggled(self, checked: bool) -> None:
         if self.delete_checkbox.isEnabled():

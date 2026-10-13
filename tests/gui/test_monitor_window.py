@@ -12,7 +12,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QWidget
+from PySide6.QtWidgets import QListWidget, QMessageBox, QWidget
 
 from gui.monitor_support import (
     FakeControllerSession,
@@ -22,6 +22,7 @@ from gui.monitor_support import (
 )
 from gui.monitor_support_qt import FakeMonitorRunner, FakeScanRunner, dispose, make_library
 from videocompressor.core.config import AppConfig
+from videocompressor.core.models import ArchiveRoot
 from videocompressor.gui import monitor_window
 from videocompressor.gui.controller_session import start_controller_session
 from videocompressor.gui.local_worker import STATE_STOPPED, LocalWorkerOutcome
@@ -70,6 +71,7 @@ class FakeConvertPanel(QWidget):
     """Stand-in for ``ConvertPanel`` in the window tests."""
 
     enqueued = Signal(int)
+    roots_changed = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -355,6 +357,17 @@ def test_local_worker_follows_the_monitor_and_root_signals(qapp, tmp_path):
 
         window.library.roots_panel.roots_changed.emit()
         assert local_worker.roots_changes == 1
+
+        # A convert-flow auto-registration refreshes the Library list and the
+        # local worker mapping (issue #82).
+        window.library.config.roots.append(
+            ArchiveRoot(id="ride", name="Ride", path=tmp_path)
+        )
+        listed = window.library.roots_panel.findChild(QListWidget)
+        assert listed is not None and listed.count() == 0
+        window.convert.roots_changed.emit()
+        assert local_worker.roots_changes == 2
+        assert listed.count() == 1
     finally:
         dispose(window)
 

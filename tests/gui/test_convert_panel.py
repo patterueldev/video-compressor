@@ -82,7 +82,7 @@ def panel_factory(qapp, tmp_path):
         root_dir.mkdir(exist_ok=True)
         register_root(config, root_id="archive", name="Archive", path=root_dir)
         client = client if client is not None else FakeEnqueueClient()
-        panel = convert_panel.ConvertPanel(client, config)
+        panel = convert_panel.ConvertPanel(client, config, tmp_path / "config.toml")
         created.append(panel)
         return panel, client, config
 
@@ -134,18 +134,6 @@ def test_drop_a_folder_adds_only_videos_with_counts_and_size(qapp, tmp_path, pan
     assert "added 2 videos" in panel.message_label.text()
     assert "ignored 1 non-video file" in panel.message_label.text()
     assert panel.start_button.isEnabled()
-
-
-def test_drop_outside_roots_shows_problem_row_and_disables_start(qapp, tmp_path, panel_factory):
-    panel, _client, _config = panel_factory()
-    outside = clip(tmp_path / "elsewhere" / "clip.MP4")
-
-    panel.drop_zone.paths_dropped.emit([outside])
-
-    assert panel.pending_table.rowCount() == 1
-    assert "registered root" in panel.pending_table.item(0, 2).text()
-    assert "need attention" in panel.selection_label.text()
-    assert not panel.start_button.isEnabled()
 
 
 def test_open_files_dialog_adds_rows(qapp, tmp_path, panel_factory, file_dialog):
@@ -215,21 +203,6 @@ def test_subfolder_validation_blocks_start(qapp, tmp_path, panel_factory, messag
     panel.start()
     assert client.payloads == []
     assert "subfolder" in panel.message_label.text()
-
-
-def test_custom_folder_outside_roots_blocks_start(qapp, tmp_path, panel_factory, message_box):
-    panel, client, config = panel_factory()
-    panel.add_paths([clip(config.roots[0].path / "A.MP4")])
-    panel.mode_combo.setCurrentIndex(1)  # Custom folder
-
-    outside = tmp_path / "out"
-    outside.mkdir()
-    panel.folder_edit.setText(str(outside))
-
-    assert "registered root" in panel.destination_hint.text()
-    panel.start()
-    assert client.payloads == []
-    assert "registered root" in panel.message_label.text()
 
 
 def test_custom_folder_inside_a_root_is_valid(qapp, tmp_path, panel_factory):

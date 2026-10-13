@@ -205,8 +205,8 @@ def test_destination_custom_folder(tmp_path, archive):
     destination, problem = destination_from_fields(
         mode=MODE_CUSTOM_FOLDER, root_id=None, subfolder="", folder=archive, roots=roots
     )
-    assert destination is None
-    assert "subfolder" in problem
+    assert problem is None
+    assert destination == Destination(DestinationKind.OUTPUT_ROOT, "archive", "")
 
     outside = tmp_path / "out"
     outside.mkdir()

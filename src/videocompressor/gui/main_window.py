@@ -63,7 +63,9 @@ class MainWindow(QMainWindow):
         top.addWidget(self.drop_zone, 1)
         top.addLayout(side)
 
-        self.roots_panel = RootsPanel(config, config_path, self)
+        self.roots_panel = RootsPanel(
+            config, config_path, self, manifest_path=self.manifest_path
+        )
         self.templates_panel = TemplatesPanel(config, config_path, self)
         self.templates_panel.template_selected.connect(self._on_template_changed)
         self.templates_panel.template_saved.connect(self._on_template_changed)

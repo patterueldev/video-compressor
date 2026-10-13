@@ -45,7 +45,10 @@ HINT_OUTPUT_ROOT = (
     "Outputs go under the root plus the subfolder; an empty subfolder mirrors each"
     " clip's source folders."
 )
-HINT_CUSTOM_FOLDER = "Outputs are placed in this folder; it must be inside a registered root."
+HINT_CUSTOM_FOLDER = (
+    "Outputs are placed under this folder; a folder outside the registered roots"
+    " is registered as an output root when you press Start."
+)
 HINT_SAME_FOLDER = (
     "The output replaces the source at its own path (verified swap); the original"
     " cannot be kept."
@@ -97,15 +100,25 @@ class DestinationForm(QGroupBox):
         """The selected destination mode."""
         return str(self.mode_combo.currentData())
 
-    def destination(self) -> tuple[Destination | None, str | None]:
-        """The current destination, or ``(None, problem)`` when invalid."""
+    def fields(self) -> tuple[str, str | None, str, Path | None]:
+        """The raw destination inputs: mode, root id, subfolder, folder."""
         root_id = self.root_combo.currentData()
         folder_text = self.folder_edit.text().strip()
+        return (
+            self.mode(),
+            root_id if isinstance(root_id, str) else None,
+            self.subfolder_edit.text(),
+            Path(folder_text).expanduser() if folder_text else None,
+        )
+
+    def destination(self) -> tuple[Destination | None, str | None]:
+        """The current destination, or ``(None, problem)`` when invalid."""
+        mode, root_id, subfolder, folder = self.fields()
         return destination_from_fields(
-            mode=self.mode(),
-            root_id=root_id if isinstance(root_id, str) else None,
-            subfolder=self.subfolder_edit.text(),
-            folder=Path(folder_text).expanduser() if folder_text else None,
+            mode=mode,
+            root_id=root_id,
+            subfolder=subfolder,
+            folder=folder,
             roots=self.config.roots,
         )
 

@@ -89,7 +89,7 @@ class MonitorWindow(QMainWindow):
         self.convert = (
             convert
             if convert is not None
-            else ConvertPanel(session.client, config, parent=self)
+            else ConvertPanel(session.client, config, config_path, parent=self)
         )
         self.nodes = (
             nodes
@@ -108,6 +108,7 @@ class MonitorWindow(QMainWindow):
         self.tabs.addTab(self.nodes, "Nodes")
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.convert.enqueued.connect(self._on_enqueued)
+        self.convert.roots_changed.connect(self._on_convert_roots_changed)
         self.setCentralWidget(self.tabs)
         if self.local_worker is not None:
             self.monitor.runner.updated.connect(self.local_worker.apply_snapshot)
@@ -121,6 +122,14 @@ class MonitorWindow(QMainWindow):
         """Show the Monitor tab and poll immediately after a successful enqueue."""
         self.tabs.setCurrentWidget(self.monitor)
         self.monitor.refresh_now()
+
+    def _on_convert_roots_changed(self) -> None:
+        """Follow a convert-flow auto-registration in the Library and local worker."""
+        roots_panel = getattr(self.library, "roots_panel", None)
+        if roots_panel is not None:
+            roots_panel.refresh()
+        if self.local_worker is not None:
+            self.local_worker.on_roots_changed()
 
     def _on_tab_changed(self, _index: int) -> None:
         """Refresh the convert form when its tab becomes current."""
