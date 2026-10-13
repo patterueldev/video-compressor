@@ -8,7 +8,7 @@ import time
 import pytest
 
 from fixtures.controller import TOKEN
-from fixtures.worker import CLIP, FakeEncoder
+from fixtures.worker import CLIP, FakeEncoder, make_job
 from videocompressor.core.models import Fingerprint, JobState
 from videocompressor.worker.agent import WorkerAgent
 from videocompressor.worker.client import ControllerAuthError, ControllerError
@@ -118,7 +118,8 @@ def test_heartbeat_streams_progress_and_stop_command_cancels(
 
     monkeypatch.setattr("videocompressor.worker.agent.JobPipeline", pipeline_factory)
     agent = WorkerAgent(config)
-    thread = threading.Thread(target=lambda: agent.run(max_jobs=1))
+    # run() without --once: the heartbeat stop itself must end the claim loop
+    thread = threading.Thread(target=agent.run)
     thread.start()
     try:
         assert wait_until(lambda: bool(encoder.calls))
@@ -237,3 +238,144 @@ def test_request_stop_exits_the_idle_loop(server, worker_config_factory):
     finally:
         agent.request_stop()
         thread.join(timeout=5)
+
+
+class ScriptedClient:
+    """Client double: scripted claims plus a fixed heartbeat stop response."""
+
+    def __init__(self, jobs=None, *, heartbeat_response=None) -> None:
+        self._jobs = list(jobs or [])
+        self._heartbeat_response = heartbeat_response or {"stop": False}
+        self.registers = 0
+        self.claim_calls = 0
+        self.heartbeat_calls = 0
+        self.completed: list[str] = []
+        self.failed: list[tuple[str, str]] = []
+
+    def register(self, **kwargs):
+        self.registers += 1
+        return {"heartbeat_seconds": 0.05}
+
+    def heartbeat(self, worker_id, **kwargs):
+        self.heartbeat_calls += 1
+        return dict(self._heartbeat_response)
+
+    def claim(self, worker_id):
+        self.claim_calls += 1
+        if self._jobs:
+            return self._jobs.pop(0)
+        return None
+
+    def complete(self, worker_id, job, output):
+        self.completed.append(job.relative_path)
+
+    def fail(self, worker_id, job, *, error, disposition):
+        self.failed.append((job.relative_path, disposition))
+
+
+class StopAwarePipeline:
+    """Pipeline double that completes unless its stop event fires."""
+
+    def __init__(self, *, wait_seconds: float = 0.6) -> None:
+        self.wait_seconds = wait_seconds
+        self.jobs = []
+
+    def run(self, job, *, stop_event):
+        self.jobs.append(job)
+        if stop_event.wait(self.wait_seconds):
+            return JobOutcome("requeue", "stopped during fake encode")
+        return JobOutcome(
+            "complete", output=Fingerprint(size_bytes=1, mtime_ns=1, digest="out")
+        )
+
+
+def test_heartbeat_drain_finishes_the_job_and_exits(worker_config_factory):
+    client = ScriptedClient(
+        [make_job("a.MP4"), make_job("b.MP4")],
+        heartbeat_response={"stop": True, "stop_mode": "drain"},
+    )
+    pipeline = StopAwarePipeline()
+    agent = WorkerAgent(worker_config_factory(), client=client, pipeline=pipeline)
+    thread = threading.Thread(target=agent.run)
+    thread.start()
+    try:
+        assert wait_until(lambda: not thread.is_alive(), timeout=10)
+    finally:
+        agent.request_stop()
+        thread.join(timeout=5)
+
+    # the current clip settled normally; the node exited without claiming b.MP4
+    assert [job.relative_path for job in pipeline.jobs] == ["a.MP4"]
+    assert client.completed == ["a.MP4"]
+    assert client.failed == []
+    assert client.claim_calls == 1
+
+
+def test_heartbeat_stop_without_mode_is_cancel_and_exits(worker_config_factory):
+    # an old controller sends no stop_mode: the stop must cancel and exit
+    client = ScriptedClient(
+        [make_job("a.MP4"), make_job("b.MP4")], heartbeat_response={"stop": True}
+    )
+    pipeline = StopAwarePipeline(wait_seconds=5.0)
+    agent = WorkerAgent(worker_config_factory(), client=client, pipeline=pipeline)
+    thread = threading.Thread(target=agent.run)
+    thread.start()
+    try:
+        assert wait_until(lambda: not thread.is_alive(), timeout=10)
+    finally:
+        agent.request_stop()
+        thread.join(timeout=5)
+
+    assert client.failed == [("a.MP4", "requeue")]
+    assert client.completed == []
+    assert client.claim_calls == 1
+
+
+def test_request_drain_finishes_the_current_job_then_exits(worker_config_factory):
+    client = ScriptedClient([make_job("a.MP4"), make_job("b.MP4")])
+    pipeline = StopAwarePipeline(wait_seconds=0.4)
+    agent = WorkerAgent(worker_config_factory(), client=client, pipeline=pipeline)
+    thread = threading.Thread(target=agent.run)
+    thread.start()
+    try:
+        assert wait_until(lambda: bool(pipeline.jobs))
+        agent.request_drain()
+        assert wait_until(lambda: not thread.is_alive(), timeout=10)
+    finally:
+        agent.request_stop()
+        thread.join(timeout=5)
+
+    assert client.completed == ["a.MP4"]
+    assert client.claim_calls == 1
+
+
+def test_request_drain_on_an_idle_agent_exits(server, worker_config_factory):
+    config = worker_config_factory(controller_url=server.base_url, token=TOKEN)
+    agent = WorkerAgent(config, pipeline=StubPipeline(JobOutcome("failed", "none")))
+    thread = threading.Thread(target=agent.run)
+    thread.start()
+    try:
+        agent.request_drain()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    finally:
+        agent.request_stop()
+        thread.join(timeout=5)
+
+
+def test_heartbeat_drain_on_an_idle_agent_exits(worker_config_factory):
+    client = ScriptedClient(heartbeat_response={"stop": True, "stop_mode": "drain"})
+    agent = WorkerAgent(
+        worker_config_factory(),
+        client=client,
+        pipeline=StubPipeline(JobOutcome("failed", "none")),
+    )
+    thread = threading.Thread(target=agent.run)
+    thread.start()
+    try:
+        assert wait_until(lambda: not thread.is_alive(), timeout=10)
+    finally:
+        agent.request_stop()
+        thread.join(timeout=5)
+
+    assert client.claim_calls >= 1

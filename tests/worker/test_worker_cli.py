@@ -90,23 +90,49 @@ def test_worker_once_reports_complete(
     assert "cli-node ->" in capsys.readouterr().out
 
 
+class FakeSignalAgent:
+    """Records which stop mode the installed signal handlers requested."""
+
+    def __init__(self) -> None:
+        self.stopped = False
+        self.drained = False
+
+    def request_stop(self) -> None:
+        self.stopped = True
+
+    def request_drain(self) -> None:
+        self.drained = True
+
+
+def _wait_for(predicate, timeout: float = 2.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while not predicate() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return predicate()
+
+
 def test_worker_signal_handler_requests_stop():
     from videocompressor.cli.worker import _install_signal_handlers
 
-    class FakeAgent:
-        def __init__(self) -> None:
-            self.stopped = False
-
-        def request_stop(self) -> None:
-            self.stopped = True
-
-    agent = FakeAgent()
+    agent = FakeSignalAgent()
     restore = _install_signal_handlers(agent)
     try:
         os.kill(os.getpid(), signal.SIGTERM)
-        deadline = time.monotonic() + 2
-        while not agent.stopped and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert agent.stopped
+        assert _wait_for(lambda: agent.stopped)
+        assert not agent.drained
+    finally:
+        restore()
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="platform has no SIGUSR1")
+def test_worker_signal_handler_requests_drain():
+    from videocompressor.cli.worker import _install_signal_handlers
+
+    agent = FakeSignalAgent()
+    restore = _install_signal_handlers(agent)
+    try:
+        os.kill(os.getpid(), signal.SIGUSR1)
+        assert _wait_for(lambda: agent.drained)
+        assert not agent.stopped
     finally:
         restore()
