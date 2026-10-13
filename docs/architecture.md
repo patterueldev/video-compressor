@@ -36,7 +36,8 @@ Rules:
 Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and the test fixtures):
 
 - `core`: `models` (dataclasses/enums), `probe`, `capture_time`, `fingerprint`, `scan`,
-  `manifest` (SQLite queue), `manifest_schema` (queue DDL, migration, row codecs), `markers`,
+  `manifest` (SQLite queue), `manifest_schema` (queue DDL, DML statements, migration, row codecs),
+  `markers`,
   `ffmpeg` (two-pass x265 encode), `validate`, `replace`, `place` (destination placement),
   `records` (destination completion records), `recover`, `config` (per-user TOML),
   `nodes` (per-node entries: SSH target, root mappings; issue #54).
@@ -161,8 +162,10 @@ optional dry-run and reporting tooling.
   or fake probe results, so the scan suite stays ffprobe-free.
 - The manifest `events` table (seq/at/level/message) records engine-level events; the controller
   keeps its per-run log (worker and run tagging) in its own database, served by
-  `GET /api/v1/events`. `LEASE_TTL_SECONDS` (90) and `HEARTBEAT_INTERVAL_SECONDS` (15) live in
-  `core/manifest.py` and are re-exported by `controller/constants.py`.
+  `GET /api/v1/events`. `LEASE_TTL_SECONDS` (90, the code fallback) and
+  `HEARTBEAT_INTERVAL_SECONDS` (15) live in `core/manifest.py` and are re-exported by
+  `controller/constants.py`; the `[controller]` setting `orphan_grace_seconds` (default 300 s,
+  issue #75) is the job-lease TTL, threaded into the manifest at open time.
 
 ## Access-transport seam
 
@@ -252,8 +255,8 @@ over the local network.
 - Base URL: `http://<bind>:<port>/api/v1`, default bind `127.0.0.1:8765`. Bind address and port
   are configurable (issue #7); use the LAN interface (e.g. `0.0.0.0:8765`) when workers run on
   other machines. The token is required in every deployment. The `[controller]` section of the
-  per-user config holds `host`, `port`, and `token`; `vc controller` flags override the bind
-  address for one run.
+  per-user config holds `host`, `port`, `token`, and `orphan_grace_seconds` (default 300);
+  `vc controller` flags override the bind address for one run.
 - Auth: every request carries `Authorization: Bearer <token>`. The token is generated once and
   stored in the per-user config; workers receive it out of band and it is never committed.
   Missing or invalid token → `401`.
@@ -265,11 +268,16 @@ over the local network.
 
 ### Lease semantics
 
-- A successful claim starts a 90 s lease (`LEASE_TTL_SECONDS = 90`).
+- A successful claim starts a job lease of `orphan_grace_seconds` (`[controller]` setting,
+  default 300 s; the code-level fallback is `LEASE_TTL_SECONDS = 90`). A laptop node that sleeps
+  inside the window wakes and resumes its job seamlessly.
 - Workers renew through heartbeat every 15 s (`HEARTBEAT_INTERVAL_SECONDS = 15`).
-- No renewal within 90 s → the lease is expired: the worker counts as offline, its active job is
-  recoverable, and the controller runs reconciliation (issue #5) before the clip can be claimed
-  again. Nothing may be claimed twice while a live lease or unresolved recovery exists.
+- No renewal within the grace → the lease is expired, its active job is recoverable, and the
+  controller runs reconciliation (issue #5) before the clip can be claimed again. Nothing may be
+  claimed twice while a live lease or unresolved recovery exists. A worker that wakes after its
+  grace gets `409` and discards its local work (the existing lease-conflict behavior).
+- The Monitor's online/offline flip is decoupled from a long grace (issue #75): a worker silent
+  for `min(orphan_grace_seconds, 90)` counts as offline even while its job lease is still held.
 - Stop instructs the worker to terminate the current FFmpeg process; states stay durable and a
   later resume requeues the clip.
 
@@ -291,7 +299,7 @@ intervals.
   "version": "0.1.0"
 }
 // response 200
-{"lease_seconds": 90, "heartbeat_seconds": 15}
+{"lease_seconds": 300, "heartbeat_seconds": 15}
 ```
 
 #### `POST /api/v1/workers/{worker_id}/heartbeat`
@@ -313,7 +321,7 @@ GUI. `"stop": true` in the response tells the worker to terminate the active job
   }
 }
 // response 200
-{"stop": false, "lease_seconds": 90}
+{"stop": false, "lease_seconds": 300}
 ```
 
 The optional `progress.phase` (`copied`, `encoding`, `validated`, `transferring`, `replacing`)
@@ -498,11 +506,12 @@ Monitoring and stop/resume additions; every v1 payload above stays valid.
 
 #### Lease sweep and reconciliation
 
-The controller sweeps every 5 s: workers silent for 90 s flip to offline, and expired job leases
-are recovered through `Manifest.reconcile()`. Clips that expired in the copy/encode stages are
-requeued; clips in the replacement stages (`validated`, `transferring`, `replacing`) park in
-`review` until the issue #5 recovery protocol confirms the source/backup state. Nothing is
-claimable twice while a live lease or unresolved recovery exists.
+The controller sweeps every 5 s: workers silent for `min(orphan_grace_seconds, 90)` s flip to
+offline, and expired job leases (silent for the grace) are recovered through
+`Manifest.reconcile()`. Clips that expired in the copy/encode stages are requeued; clips in the
+replacement stages (`validated`, `transferring`, `replacing`) park in `review` until the issue
+#5 recovery protocol confirms the source/backup state. Nothing is claimable twice while a live
+lease or unresolved recovery exists.
 
 Payloads are intentionally minimal: adding optional fields is backwards compatible; removing or
 renaming a field requires contract v2.
@@ -512,7 +521,8 @@ renaming a field requires contract v2.
 The durable queue is the SQLite manifest (`core/manifest.py`); destination specs and the
 `delete_original` flag live on the job row itself (`destination_json`, `delete_original`), so a
 job's identity, lease state, and conversion spec never drift apart. `core/manifest_schema.py`
-owns the clips/events DDL, the row codecs, and an idempotent migration that adds the conversion
-columns the first time an older database is opened writable. A read-only open never migrates and
-tolerates the missing columns, so a dry `vc scan` keeps working before the controller upgrades;
-old code can still read a migrated database because the added columns are ignored.
+owns the clips/events DDL, the clip DML statements, the row codecs, and an idempotent migration
+that adds the conversion columns the first time an older database is opened writable. A read-only
+open never migrates and tolerates the missing columns, so a dry `vc scan` keeps working before
+the controller upgrades; old code can still read a migrated database because the added columns
+are ignored.

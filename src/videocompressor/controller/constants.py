@@ -24,6 +24,7 @@ __all__ = [
     "LEASE_STATES",
     "LEASE_TTL_SECONDS",
     "MAX_BODY_BYTES",
+    "ONLINE_WINDOW_SECONDS",
     "SWEEP_INTERVAL_SECONDS",
     "WORKER_ID_PATTERN",
     "Clock",
@@ -31,6 +32,10 @@ __all__ = [
 ]
 
 SWEEP_INTERVAL_SECONDS = 5
+
+#: Monitor online window: a worker silent for ``min(orphan grace, this)`` counts as
+#: offline even while its job lease is still held (issue #75).
+ONLINE_WINDOW_SECONDS = 90
 
 #: Worker ids match this pattern (``docs/architecture.md``).
 WORKER_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")

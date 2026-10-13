@@ -19,6 +19,8 @@ from urllib.parse import quote
 
 from videocompressor.core.manifest_schema import (
     SCHEMA,
+    UPDATE_CLIP_SQL,
+    UPSERT_CLIP_SQL,
     capture_to_json,
     destination_to_json,
     from_iso,
@@ -35,7 +37,8 @@ from videocompressor.core.models import (
     RunEvent,
 )
 
-#: Lease lifetime and heartbeat cadence from docs/architecture.md (issue #7).
+#: Default lease lifetime and heartbeat cadence from docs/architecture.md (issue #7).
+#: The controller's ``[controller] orphan_grace_seconds`` setting overrides the TTL (issue #75).
 LEASE_TTL_SECONDS = 90
 HEARTBEAT_INTERVAL_SECONDS = 15
 
@@ -87,15 +90,28 @@ def _utcnow() -> datetime:
 class Manifest:
     """Durable clip/job store shared by the controller, workers, and the GUI."""
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        lease_ttl_seconds: int = LEASE_TTL_SECONDS,
+    ) -> None:
         self._connection = connection
+        self._lease_ttl = lease_ttl_seconds
 
     @classmethod
-    def open(cls, db_path: Path, *, create: bool = True) -> Self:
+    def open(
+        cls,
+        db_path: Path,
+        *,
+        create: bool = True,
+        lease_ttl_seconds: int = LEASE_TTL_SECONDS,
+    ) -> Self:
         """Open (or create) the manifest database at ``db_path``.
 
         ``create=False`` opens strictly read-only and never modifies the file;
-        callers use it for dry runs.
+        callers use it for dry runs. ``lease_ttl_seconds`` is the job-lease
+        lifetime; the controller threads its orphan grace in (issue #75).
         """
         if create:
             db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -111,7 +127,7 @@ class Manifest:
             connection.execute("PRAGMA busy_timeout=5000")
             connection.executescript(SCHEMA)
             migrate(connection)
-        return cls(connection)
+        return cls(connection, lease_ttl_seconds=lease_ttl_seconds)
 
     def close(self) -> None:
         self._connection.close()
@@ -141,34 +157,7 @@ class Manifest:
         now = _utcnow()
         output = record.output
         self._connection.execute(
-            """
-            INSERT INTO clips (
-                root_id, relative_path, state, classification,
-                source_size_bytes, source_mtime_ns, source_digest,
-                output_size_bytes, output_mtime_ns, output_digest,
-                capture_time_json, destination_json, delete_original,
-                template_id, settings_hash, worker_id, error,
-                created_at, updated_at, completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(root_id, relative_path) DO UPDATE SET
-                state = excluded.state,
-                classification = excluded.classification,
-                source_size_bytes = excluded.source_size_bytes,
-                source_mtime_ns = excluded.source_mtime_ns,
-                source_digest = excluded.source_digest,
-                output_size_bytes = excluded.output_size_bytes,
-                output_mtime_ns = excluded.output_mtime_ns,
-                output_digest = excluded.output_digest,
-                capture_time_json = excluded.capture_time_json,
-                destination_json = excluded.destination_json,
-                delete_original = excluded.delete_original,
-                template_id = excluded.template_id,
-                settings_hash = excluded.settings_hash,
-                worker_id = excluded.worker_id,
-                error = excluded.error,
-                updated_at = excluded.updated_at,
-                completed_at = excluded.completed_at
-            """,
+            UPSERT_CLIP_SQL,
             (
                 record.root_id,
                 record.relative_path,
@@ -235,7 +224,7 @@ class Manifest:
                     (
                         str(JobState.CLAIMED),
                         worker_id,
-                        to_iso(now + timedelta(seconds=LEASE_TTL_SECONDS)),
+                        to_iso(now + timedelta(seconds=self._lease_ttl)),
                         to_iso(now),
                         row["root_id"],
                         row["relative_path"],
@@ -247,7 +236,7 @@ class Manifest:
         return self.get_clip(*claimed_key) if claimed_key is not None else None
 
     def heartbeat(self, root_id: str, relative_path: str, worker_id: str) -> None:
-        """Renew the lease on a claimed clip (90 s TTL, 15 s heartbeat; issue #7).
+        """Renew the lease on a claimed clip (lease TTL, 15 s heartbeat; issue #7).
 
         Only clips in a lease-holding state are renewable; terminal states keep
         ``worker_id`` as history, so a late heartbeat after completion or after
@@ -261,7 +250,7 @@ class Manifest:
             "WHERE root_id = ? AND relative_path = ? AND worker_id = ? "
             f"AND state IN ({placeholders})",
             (
-                to_iso(now + timedelta(seconds=LEASE_TTL_SECONDS)),
+                to_iso(now + timedelta(seconds=self._lease_ttl)),
                 to_iso(now),
                 root_id,
                 relative_path,
@@ -322,7 +311,7 @@ class Manifest:
         if state in LEASE_STATES:
             lease_expires_at = row["lease_expires_at"]
             if lease_expires_at is None and state is JobState.CLAIMED:
-                lease_expires_at = to_iso(now + timedelta(seconds=LEASE_TTL_SECONDS))
+                lease_expires_at = to_iso(now + timedelta(seconds=self._lease_ttl))
         else:
             lease_expires_at = None
 
@@ -335,16 +324,7 @@ class Manifest:
         if not isinstance(values["delete_original"], bool):
             raise ValueError("delete_original must be a bool")
         self._connection.execute(
-            """
-            UPDATE clips SET
-                state = ?, classification = ?, source_size_bytes = ?, source_mtime_ns = ?,
-                source_digest = ?, output_size_bytes = ?, output_mtime_ns = ?,
-                output_digest = ?, capture_time_json = ?, destination_json = ?,
-                delete_original = ?, template_id = ?, settings_hash = ?,
-                worker_id = ?, lease_expires_at = ?, error = ?, updated_at = ?,
-                completed_at = ?
-            WHERE root_id = ? AND relative_path = ?
-            """,
+            UPDATE_CLIP_SQL,
             (
                 str(state),
                 str(values["classification"]),

@@ -82,7 +82,8 @@ def start_controller_session(
 
     store = ControllerStore.open(store_path if store_path is not None else default_db_path())
     manifest, durable = open_manifest(
-        manifest_path if manifest_path is not None else default_manifest_path()
+        manifest_path if manifest_path is not None else default_manifest_path(),
+        lease_ttl_seconds=config.controller.orphan_grace_seconds,
     )
     server = ControllerServer(
         store=store,
@@ -92,6 +93,7 @@ def start_controller_session(
         port=config.controller.port,
         templates=config.templates,
         roots=lambda: config.roots,
+        lease_ttl_seconds=config.controller.orphan_grace_seconds,
     )
     try:
         server.start_background()

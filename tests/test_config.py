@@ -63,6 +63,7 @@ def test_controller_defaults(tmp_path):
     assert config.controller.host == "127.0.0.1"
     assert config.controller.port == 8765
     assert config.controller.token is None
+    assert config.controller.orphan_grace_seconds == 300
 
 
 def test_controller_round_trip(tmp_path):
@@ -71,22 +72,32 @@ def test_controller_round_trip(tmp_path):
     config.controller.host = "0.0.0.0"
     config.controller.port = 9000
     config.controller.token = "secret-token"
+    config.controller.orphan_grace_seconds = 120
     save_config(config, path)
 
     text = path.read_text(encoding="utf-8")
     assert "[controller]" in text
+    assert "orphan_grace_seconds = 120" in text
     loaded = load_config(path)
     assert loaded.controller == config.controller
 
 
 def test_controller_section_partial(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text("[controller]\nport = 9100\n", encoding="utf-8")
+    path.write_text("[controller]\nport = 9100\norphan_grace_seconds = 45\n", encoding="utf-8")
 
     config = load_config(path)
     assert config.controller.port == 9100
     assert config.controller.host == "127.0.0.1"
     assert config.controller.token is None
+    assert config.controller.orphan_grace_seconds == 45
+
+
+def test_controller_orphan_grace_invalid_values_keep_the_default(tmp_path):
+    path = tmp_path / "config.toml"
+    for value in ("0", "-60", '"soon"'):
+        path.write_text(f"[controller]\norphan_grace_seconds = {value}\n", encoding="utf-8")
+        assert load_config(path).controller.orphan_grace_seconds == 300
 
 
 def _write_legacy_template(path: Path, **bitrates: int) -> None:
