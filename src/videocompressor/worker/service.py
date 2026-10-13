@@ -31,6 +31,7 @@ from videocompressor.worker.service_platform import (
     stop_actions,
     systemd_show_argv,
 )
+from videocompressor.worker.toolpaths import service_path_value
 from videocompressor.worker.units import (
     env_file_path,
     log_paths,
@@ -123,11 +124,14 @@ def default_paths(platform: str | None = None) -> ServicePaths:
 
 @dataclass(frozen=True)
 class ServiceSpec:
-    """The service a worker config asks for: identity, command, and token source."""
+    """The service a worker config asks for: identity, command, PATH, token source."""
 
     worker_id: str
     config_path: Path
     command: tuple[str, ...]
+    #: PATH the rendered unit runs with: the detected ffmpeg/ffprobe directories
+    #: plus the standard system paths (issue #71).
+    path_value: str
     token_env: str | None = None
     token_value: str | None = None
 
@@ -187,6 +191,7 @@ def _spec(
         worker_id=worker_id,
         config_path=resolved,
         command=tuple(command) if command is not None else default_worker_command(resolved),
+        path_value=service_path_value(),
         token_env=token_env,
         token_value=token_value,
     )

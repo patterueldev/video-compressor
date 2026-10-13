@@ -18,19 +18,24 @@ class LocalShellRunner:
     """Runs the probe command through the local POSIX shell (offline, no SSH).
 
     The probe script is shell code, so the only honest regression test for its
-    tilde expansion executes the real command text with a controlled ``HOME``.
+    tilde expansion and tool fallback executes the real command text with a
+    controlled ``HOME`` and (optionally) a controlled ``PATH``.
     """
 
-    def __init__(self, home: Path) -> None:
+    def __init__(self, home: Path, *, path: str | None = None) -> None:
         self.home = home
+        self.path = path
 
     def run(self, command: str, *, timeout: float = 30.0) -> CommandResult:
+        env = {**os.environ, "HOME": str(self.home)}
+        if self.path is not None:
+            env["PATH"] = self.path
         completed = subprocess.run(
             command,
             shell=True,
             capture_output=True,
             text=True,
-            env={**os.environ, "HOME": str(self.home)},
+            env=env,
             timeout=timeout,
         )
         return CommandResult(command, completed.returncode, completed.stdout, completed.stderr)
@@ -63,6 +68,7 @@ def test_probe_assembles_fields() -> None:
     command = runner.commands[0]
     assert f"VC_INSTALL_DIR={INSTALL_DIR}" in command
     assert f"VC_SCRATCH_DIR={SCRATCH_DIR}" in command
+    assert "VC_FALLBACK_BIN_DIRS='/opt/homebrew/bin /usr/local/bin'" in command
 
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="a POSIX shell is required")
@@ -85,6 +91,54 @@ def test_probe_shell_expands_tilde_install_dirs(
     assert probe.home == str(home)
     assert probe.install_dir == f"{home}{suffix}"
     assert "~" not in probe.install_dir
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="a POSIX shell is required")
+def test_probe_falls_back_to_the_absolute_tool_locations(tmp_path: Path) -> None:
+    """With no tools on PATH, the common absolute locations resolve them (#71)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = tmp_path / "brew-bin"
+    tools.mkdir()
+    for name in ("ffmpeg", "ffprobe"):
+        tool = tools / name
+        tool.write_text(f"#!/bin/sh\necho '{name} version fixture'\n", encoding="utf-8")
+        tool.chmod(0o755)
+
+    sandbox = tmp_path / "sandbox-bin"
+    sandbox.mkdir()
+    for name in ("sh", "head"):
+        target = shutil.which(name)
+        if target is None:
+            pytest.skip(f"{name} is required")
+        (sandbox / name).symlink_to(target)
+
+    probe = probe_node(
+        LocalShellRunner(home, path=str(sandbox)),
+        install_dir="~/.videocompressor",
+        fallback_bin_dirs=[str(tools)],
+    )
+
+    assert probe.ffmpeg == str(tools / "ffmpeg")
+    assert probe.ffprobe == str(tools / "ffprobe")
+    assert probe.ffmpeg_version == "ffmpeg version fixture"
+    assert probe.install_dir == str(home / ".videocompressor")
+
+
+def test_probe_reports_fallback_resolved_paths_from_fixture_output() -> None:
+    runner = FakeSshRunner(
+        probe=probe_output(
+            ffmpeg="/opt/homebrew/bin/ffmpeg",
+            ffprobe="/opt/homebrew/bin/ffprobe",
+            ffmpeg_version="ffmpeg version 7.0",
+        )
+    )
+
+    probe = probe_node(runner, install_dir="~/.videocompressor")
+
+    assert probe.ffmpeg == "/opt/homebrew/bin/ffmpeg"
+    assert probe.ffprobe == "/opt/homebrew/bin/ffprobe"
+    assert probe.ffmpeg_version == "ffmpeg version 7.0"
 
 
 def test_probe_without_python_or_ffmpeg() -> None:
