@@ -1,4 +1,4 @@
-"""The claim race guarantee and effective settings resolution."""
+"""The claim race guarantee, root-aware claim routing, and effective settings resolution."""
 
 from __future__ import annotations
 
@@ -145,3 +145,85 @@ def test_claim_carries_the_template_video_bitrate(tmp_path, clock, make_api):
         status, naive = client.post("/jobs/claim", {"worker_id": "w"})
         assert status == 200
         assert naive["job"]["settings"]["video_bitrate_kbps"] == 700
+
+
+def test_claim_routes_clips_by_the_workers_roots(api, seed_clip, manifest):
+    api.register("node-a", roots={"archive": "/mnt/archive"})
+    api.register("node-b", roots={"folders": "/srv/folders"})
+    seed_clip("archive.MP4", root_id="archive")
+    seed_clip("folder.MP4", root_id="folders")
+
+    status, body = api.post("/jobs/claim", {"worker_id": "node-a"})
+    assert status == 200
+    assert body["job"]["root_id"] == "archive"
+    assert body["job"]["relative_path"] == "archive.MP4"
+
+    status, body = api.post("/jobs/claim", {"worker_id": "node-b"})
+    assert status == 200
+    assert body["job"]["root_id"] == "folders"
+    assert body["job"]["relative_path"] == "folder.MP4"
+
+    for root_id, relative_path, worker_id in (
+        ("archive", "archive.MP4", "node-a"),
+        ("folders", "folder.MP4", "node-b"),
+    ):
+        record = manifest.get_clip(root_id, relative_path)
+        assert record is not None and record.state is JobState.CLAIMED
+        assert record.worker_id == worker_id
+    assert api.post("/jobs/claim", {"worker_id": "node-a"}) == (204, None)
+
+
+def test_unmapped_root_clip_stays_queued_and_never_failed(api, seed_clip, manifest):
+    api.register("node-a", roots={"archive": "/mnt/archive"})
+    api.register("node-b", roots={"folders": "/srv/folders"})
+    seed_clip("orphan.MP4", root_id="camera")
+
+    assert api.post("/jobs/claim", {"worker_id": "node-a"}) == (204, None)
+    assert api.post("/jobs/claim", {"worker_id": "node-b"}) == (204, None)
+
+    record = manifest.get_clip("camera", "orphan.MP4")
+    assert record is not None
+    assert record.state is JobState.QUEUED
+    assert record.worker_id is None
+    assert record.error is None
+
+    status, events = api.get("/events")
+    assert status == 200
+    assert all(event.get("relative_path") != "orphan.MP4" for event in events["events"])
+
+
+def test_filter_skips_an_unmapped_older_clip(api, seed_clip, clock):
+    api.register("node-a", roots={"archive": "/mnt/archive"})
+    seed_clip("orphan.MP4", root_id="camera")  # older, but no worker maps it
+    clock.advance(1)
+    seed_clip("mapped.MP4", root_id="archive")
+
+    status, body = api.post("/jobs/claim", {"worker_id": "node-a"})
+    assert status == 200
+    assert body["job"]["relative_path"] == "mapped.MP4"
+
+
+def test_worker_without_mappings_claims_nothing(api, seed_clip, manifest):
+    api.register("bare", roots={})
+    seed_clip("clip.MP4")
+
+    assert api.post("/jobs/claim", {"worker_id": "bare"}) == (204, None)
+    record = manifest.get_clip("archive", "clip.MP4")
+    assert record is not None and record.state is JobState.QUEUED
+
+
+def test_reregistration_refreshes_the_claim_filter(api, seed_clip, manifest):
+    api.register("node-a", roots={"archive": "/mnt/archive"})
+    seed_clip("first.MP4", root_id="archive")
+    status, body = api.post("/jobs/claim", {"worker_id": "node-a"})
+    assert status == 200 and body["job"]["relative_path"] == "first.MP4"
+
+    api.register("node-a", roots={"folders": "/srv/folders"})
+    seed_clip("second.MP4", root_id="folders")
+    seed_clip("third.MP4", root_id="archive")
+
+    status, body = api.post("/jobs/claim", {"worker_id": "node-a"})
+    assert status == 200 and body["job"]["relative_path"] == "second.MP4"
+    assert api.post("/jobs/claim", {"worker_id": "node-a"}) == (204, None)
+    record = manifest.get_clip("archive", "third.MP4")
+    assert record is not None and record.state is JobState.QUEUED

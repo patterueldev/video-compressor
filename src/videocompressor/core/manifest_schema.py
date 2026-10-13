@@ -33,11 +33,13 @@ from videocompressor.core.models import (
 )
 
 __all__ = [
+    "CLAIM_SQL",
     "SCHEMA",
     "UPDATE_CLIP_SQL",
     "UPSERT_CLIP_SQL",
     "capture_from_json",
     "capture_to_json",
+    "claim_sql",
     "destination_from_json",
     "destination_to_json",
     "fingerprint_from_row",
@@ -124,6 +126,30 @@ UPDATE clips SET
     completed_at = ?
 WHERE root_id = ? AND relative_path = ?
 """
+
+#: Claim the oldest queued clip, unfiltered; :func:`claim_sql` adds a root filter.
+CLAIM_SQL = (
+    "SELECT root_id, relative_path FROM clips WHERE state = ? "
+    "ORDER BY created_at, relative_path LIMIT 1"
+)
+
+
+def claim_sql(roots: frozenset[str] | None) -> tuple[str, list[object]]:
+    """Claim SELECT plus parameters, restricted to ``roots`` when given (#83).
+
+    ``None`` keeps the unfiltered behavior; an empty set matches nothing
+    (``IN (NULL)``), so a worker with no mappings can never claim a clip.
+    """
+    if roots is None:
+        return CLAIM_SQL, [str(JobState.QUEUED)]
+    markers = ", ".join("?" for _ in roots) or "NULL"
+    query = (
+        "SELECT root_id, relative_path FROM clips WHERE state = ? "
+        f"AND root_id IN ({markers}) "
+        "ORDER BY created_at, relative_path LIMIT 1"
+    )
+    return query, [str(JobState.QUEUED), *sorted(roots)]
+
 
 #: Columns added after the original clips schema: (name, SQL type/constraint).
 _ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
