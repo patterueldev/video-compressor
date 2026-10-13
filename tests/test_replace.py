@@ -305,3 +305,16 @@ def test_source_change_between_stage_and_commit_cleans_temp(
 
     assert source.read_bytes() == tampered
     assert not find_artifacts(source)
+
+
+def test_records_folder_is_not_a_swap_artifact(tmp_path: Path):
+    source = tmp_path / "GS010001.MP4"
+    source.write_bytes(ORIGINAL)
+    records = tmp_path / ".vc-records"
+    records.mkdir()
+    (records / f"{source.name}.vc-meta.json").write_text("{}", encoding="utf-8")
+
+    artifacts = find_artifacts(source)
+
+    assert not artifacts
+    assert artifacts.temps == () and artifacts.backups == ()

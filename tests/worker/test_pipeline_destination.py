@@ -91,6 +91,8 @@ def test_keep_originals_places_the_output_and_leaves_the_source_alone(
     assert outcome.output == fingerprint_file(placed)
     assert placed.read_bytes() == PLACED
     assert read_record(placed) is not None
+    assert meta_path_for(placed).is_file()
+    assert not (outputs / f"{OUTPUT_NAME}.vc-meta.json").exists()
     assert source.read_bytes() == ORIGINAL and fingerprint_file(source) == original
     assert not (source.parent / "manifest.json").exists()  # no source-folder marker
     assert list(jobs_root(config.scratch_dir).iterdir()) == []
@@ -372,6 +374,31 @@ def test_leftover_destination_artifacts_are_reaped_before_placing(
     assert not leftover.exists()
     assert (outputs / OUTPUT_NAME).read_bytes() == PLACED
     assert meta_path_for(outputs / OUTPUT_NAME).exists()
+
+
+def test_partial_records_inside_the_records_folder_are_reaped_before_placing(
+    tmp_path, worker_config_factory, fake_prober, fake_validator, fake_recover
+):
+    config = worker_config_factory()
+    seed_source(config)
+    outputs = tmp_path / "outputs"
+    records = outputs / ".vc-records"
+    records.mkdir(parents=True)
+    partial = records / f".{OUTPUT_NAME}.vc-meta.json.stale.tmp"
+    partial.write_bytes(b"partial record")
+    pipeline = make_pipeline(
+        config,
+        encode=FakeEncoder(payload=PLACED),
+        probe=fake_prober(),
+        validate=fake_validator(),
+        recover=fake_recover(),
+    )
+
+    outcome = run(pipeline, make_job(destination=custom_folder(outputs), delete_original=False))
+
+    assert outcome.disposition == "complete"
+    assert not partial.exists()
+    assert meta_path_for(outputs / OUTPUT_NAME).is_file()
 
 
 def test_delete_flag_absent_on_a_custom_destination_keeps_the_source(

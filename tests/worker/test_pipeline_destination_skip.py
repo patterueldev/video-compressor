@@ -8,13 +8,19 @@ missing source with a matching record resumes as skipped.
 
 from __future__ import annotations
 
+import shutil
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
 from fixtures.worker import CLIP, FakeEncoder, make_job
 from videocompressor.core.fingerprint import fingerprint_file
-from videocompressor.core.records import DestinationRecord, write_record
+from videocompressor.core.records import (
+    DestinationRecord,
+    legacy_meta_path_for,
+    meta_path_for,
+    write_record,
+)
 from videocompressor.worker.pipeline import JobPipeline, PipelineSeams
 
 OUTPUT_NAME = Path(CLIP).name
@@ -165,6 +171,59 @@ def test_source_missing_with_a_valid_record_resumes_as_skipped(
     outputs = tmp_path / "outputs"
     placed = outputs / OUTPUT_NAME
     seed_placed(placed, source)
+    source.unlink()
+    encoder = FakeEncoder(payload=PLACED)
+    pipeline = make_pipeline(
+        config,
+        encode=encoder,
+        probe=fake_prober(),
+        validate=fake_validator(),
+        readable=lambda path: True,
+    )
+
+    outcome = run(pipeline, make_job(destination=custom_folder(outputs), delete_original=True))
+
+    assert outcome.disposition == "complete" and outcome.skipped is True
+    assert "source is gone" in outcome.detail
+    assert encoder.calls == []
+    assert placed.read_bytes() == PLACED
+
+
+def test_a_legacy_beside_file_record_still_skips(
+    tmp_path, worker_config_factory, fake_prober, fake_validator, fake_recover
+):
+    config = worker_config_factory()
+    source = seed_source(config)
+    outputs = tmp_path / "outputs"
+    placed = outputs / OUTPUT_NAME
+    seed_placed(placed, source)
+    shutil.move(meta_path_for(placed), legacy_meta_path_for(placed))
+    encoder = FakeEncoder(payload=PLACED)
+    pipeline = make_pipeline(
+        config,
+        encode=encoder,
+        probe=fake_prober(),
+        validate=fake_validator(),
+        recover=fake_recover(),
+    )
+
+    outcome = run(pipeline, make_job(destination=custom_folder(outputs), delete_original=False))
+
+    assert outcome.disposition == "complete" and outcome.skipped is True
+    assert encoder.calls == []
+    assert placed.read_bytes() == PLACED
+    assert source.read_bytes() == ORIGINAL
+
+
+def test_source_missing_resume_reads_a_legacy_record(
+    tmp_path, worker_config_factory, fake_prober, fake_validator
+):
+    config = worker_config_factory()
+    source = seed_source(config)
+    outputs = tmp_path / "outputs"
+    placed = outputs / OUTPUT_NAME
+    seed_placed(placed, source)
+    shutil.move(meta_path_for(placed), legacy_meta_path_for(placed))
     source.unlink()
     encoder = FakeEncoder(payload=PLACED)
     pipeline = make_pipeline(

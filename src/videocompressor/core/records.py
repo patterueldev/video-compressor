@@ -1,11 +1,14 @@
 """Destination completion records for the convert flow (issue #40).
 
-A record is a small JSON sidecar written beside a placed output
-(``<output name>.vc-meta.json``). It ties the destination file to the clip
-identity and the source fingerprint captured at claim, so a later attempt can
-skip a valid existing output and the source-missing resume can trust the
-recorded output. Writes are atomic (temp file + ``os.replace``) and reads
-degrade to ``None`` for missing, corrupt, or unknown-version records.
+A record is a small JSON sidecar written into a hidden ``.vc-records/`` folder
+inside the destination directory (``.vc-records/<output name>.vc-meta.json``,
+issue #78). It ties the destination file to the clip identity and the source
+fingerprint captured at claim, so a later attempt can skip a valid existing
+output and the source-missing resume can trust the recorded output. Writes are
+atomic (temp file + ``os.replace``); reads try the ``.vc-records/`` location
+first and fall back to the legacy beside-file location, so records written by
+older versions keep working without a forced migration. Reads degrade to
+``None`` for missing, corrupt, or unknown-version records.
 """
 
 from __future__ import annotations
@@ -25,17 +28,22 @@ from videocompressor.core.models import Fingerprint
 
 __all__ = [
     "META_SUFFIX",
+    "RECORDS_DIR",
     "RECORD_VERSION",
     "DestinationRecord",
     "ExistingOutput",
     "classify_existing_output",
+    "legacy_meta_path_for",
     "meta_path_for",
     "read_record",
     "write_record",
 ]
 
-#: Suffix of the per-output completion record that lives beside the destination file.
+#: Suffix of the per-output completion record.
 META_SUFFIX = ".vc-meta.json"
+
+#: Hidden folder inside the destination directory that holds the records.
+RECORDS_DIR = ".vc-records"
 
 #: Record schema version this code reads and writes.
 RECORD_VERSION = 1
@@ -65,14 +73,32 @@ class DestinationRecord:
 
 
 def meta_path_for(output_path: Path) -> Path:
-    """Return the record path for ``output_path``."""
+    """Return the hidden ``.vc-records/`` record path for ``output_path``."""
+    return output_path.parent / RECORDS_DIR / (output_path.name + META_SUFFIX)
+
+
+def legacy_meta_path_for(output_path: Path) -> Path:
+    """Return the legacy beside-file record path for ``output_path``."""
     return output_path.with_name(output_path.name + META_SUFFIX)
 
 
 def read_record(output_path: Path) -> DestinationRecord | None:
-    """Read the record for ``output_path``; a corrupt or unknown record reads as ``None``."""
+    """Read the record for ``output_path``.
+
+    The hidden ``.vc-records/`` location is tried first; a record written
+    beside the output by an older version is the fallback. A missing, corrupt,
+    or unknown-version record reads as ``None``.
+    """
+    for path in (meta_path_for(output_path), legacy_meta_path_for(output_path)):
+        record = _read_record_file(path)
+        if record is not None:
+            return record
+    return None
+
+
+def _read_record_file(path: Path) -> DestinationRecord | None:
     try:
-        with meta_path_for(output_path).open("rb") as handle:
+        with path.open("rb") as handle:
             data = json.load(handle)
     except (OSError, json.JSONDecodeError, ValueError):
         return None
@@ -100,8 +126,9 @@ def read_record(output_path: Path) -> DestinationRecord | None:
 
 
 def write_record(output_path: Path, record: DestinationRecord) -> Path:
-    """Atomically write ``record`` beside ``output_path`` and return its path."""
+    """Atomically write ``record`` into ``.vc-records/`` and return its path."""
     path = meta_path_for(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, object] = {
         "version": RECORD_VERSION,
         "clip": record.clip,
@@ -114,7 +141,7 @@ def write_record(output_path: Path, record: DestinationRecord) -> Path:
         "output": _fingerprint_to_json(record.output),
     }
     file_descriptor, temp_name = tempfile.mkstemp(
-        prefix=f".{output_path.name}{META_SUFFIX}.", suffix=".tmp", dir=output_path.parent
+        prefix=f".{output_path.name}{META_SUFFIX}.", suffix=".tmp", dir=path.parent
     )
     try:
         with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
