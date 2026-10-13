@@ -24,7 +24,7 @@ def test_missing_and_invalid_tokens_are_rejected(api):
 
 
 def test_register_and_heartbeat_round_trip(api):
-    body = api.register("homeserver", name="Linux homeserver")
+    body = api.register("homeserver", name="Linux homeserver", machine_id="host-a")
     assert body == {"lease_seconds": 90, "heartbeat_seconds": 15}
     status, heartbeat = api.post("/workers/homeserver/heartbeat", {})
     assert status == 200
@@ -36,9 +36,18 @@ def test_register_and_heartbeat_round_trip(api):
     assert entry["name"] == "Linux homeserver"
     assert entry["online"] is True
     assert entry["roots"] == {"archive": "/srv/archive"}
+    assert entry["machine_id"] == "host-a"
     assert entry["active"] is None
     assert entry["stop_requested"] is False
     assert entry["stop_mode"] is None
+
+
+def test_register_without_a_machine_identity_reads_null(api):
+    # a registration from an agent older than #80 carries no identity
+    api.register("legacy")
+    status, workers = api.get("/workers")
+    assert status == 200
+    assert workers["workers"][0]["machine_id"] is None
 
 
 def test_heartbeat_unknown_worker_404(api):
@@ -57,6 +66,8 @@ def test_malformed_payloads_rejected(api):
     status, body = api.post("/workers/register", {"worker_id": "a", "roots": {"x": 1}})
     assert status == 400
     status, body = api.post("/workers/register", {"worker_id": "a", "thread_cap": "two"})
+    assert status == 400
+    status, body = api.post("/workers/register", {"worker_id": "a", "machine_id": 7})
     assert status == 400
     status, body = api.post("/jobs/claim", {"worker_id": 7})
     assert status == 400

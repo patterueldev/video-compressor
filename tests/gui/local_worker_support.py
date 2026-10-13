@@ -71,16 +71,20 @@ def worker_entry(
     online: bool = True,
     roots: Mapping[str, str] | None = None,
     last_seen: datetime | None = None,
+    machine_id: str | None = None,
 ) -> dict[str, Any]:
-    """One ``GET /workers`` entry."""
+    """One ``GET /workers`` entry (``machine_id`` omitted for pre-#80 payloads)."""
     when = last_seen if last_seen is not None else datetime.now(UTC) - timedelta(seconds=2)
-    return {
+    entry: dict[str, Any] = {
         "worker_id": worker_id,
         "name": worker_id,
         "online": online,
         "last_seen": when.isoformat(),
         "roots": dict(roots or {}),
     }
+    if machine_id is not None:
+        entry["machine_id"] = machine_id
+    return entry
 
 
 class FakeRegistry:

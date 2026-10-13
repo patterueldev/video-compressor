@@ -37,7 +37,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
 
 - `core`: `models` (dataclasses/enums), `probe`, `capture_time`, `fingerprint`, `scan`,
   `manifest` (SQLite queue), `manifest_schema` (queue DDL, DML statements, migration, row codecs),
-  `markers`,
+  `markers`, `machine` (hostname-derived machine identity shared by the worker and the app;
+  issue #80),
   `ffmpeg` (two-pass x265 encode), `validate`, `replace`, `place` (destination placement),
   `records` (destination completion records), `recover`, `config` (per-user TOML),
   `nodes` (per-node entries: SSH target, root mappings; issue #54).
@@ -56,7 +57,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   `local_worker_service` subprocess seams, plus the `local_worker_panel` strip; issue #52),
   with the issue #70 additions `local_worker_marker` (stop-state persistence),
   `local_worker_processes` (process-table stale-child sweep), and `shutdown_signals`
-  (SIGTERM/SIGINT quit).
+  (SIGTERM/SIGINT quit), and the issue #80 addition `local_worker_duplicate`
+  (machine-aware duplicate decision).
 - `worker`: `agent` (register/heartbeat/claim loop and the stop modes: cancel vs drain),
   `client` (controller HTTP v1),
   `outcome` (per-job result type), `pipeline` (per-job copy → encode → validate → replace),
@@ -94,10 +96,14 @@ path — and starts it as a child process managed by the app (the same `vc worke
 argv as the service); "keep running when the app closes" switches to the #51 service through the
 frozen `vc worker install-service / service-status / uninstall-service --config PATH --json`
 commands. The token travels in `VC_WORKER_TOKEN` only and is never written into the generated
-file. Startup is idempotent: an online worker with the same id (or the same root mapping) is
-adopted, and a registration row whose last heartbeat predates a confirmed app stop is treated as
-dead instead of blocking the default flow. Closing the app terminates the child (the active clip
-requeues) unless keep-running leaves the service up; the local node appears in the Monitor like
+file. Startup is idempotent: an online worker with the same id is adopted, and a registration with
+another id counts only when its machine identity (issue #80; the agent reports its hostname in the
+registration) matches this machine — a remote node whose share happens to map to the same local
+paths no longer blocks the local worker. Registrations from agents older than #80 carry no identity
+and keep the same-root-mapping heuristic. A registration row whose last heartbeat predates a
+confirmed app stop is treated as dead instead of blocking the default flow. Closing the app
+terminates the child (the active clip requeues) unless keep-running leaves the service up; the
+local node appears in the Monitor like
 any other node. Before spawning the child the supervisor also sweeps the process side (issue
 #70): processes still running the generated `local-worker.toml` are terminated (SIGTERM, then
 SIGKILL), so a child orphaned by a signalled quit or a crash can never keep claiming with stale
@@ -304,11 +310,17 @@ intervals.
   "roots": {"archive": "/srv/archive"},
   "scratch_dir": "/srv/scratch",
   "thread_cap": 2,
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "machine_id": "homeserver"
 }
 // response 200
 {"lease_seconds": 300, "heartbeat_seconds": 15}
 ```
+
+`machine_id` (issue #80) is additive and optional: the agent reports a stable identity — its
+hostname — so the app can tell a remote node with identical mount paths from the machine the app
+runs on (see "App-managed local worker"). Registrations from older agents omit it, and the app
+falls back to the pre-#80 root-mapping heuristic for those rows.
 
 #### `POST /api/v1/workers/{worker_id}/heartbeat`
 
@@ -529,8 +541,8 @@ Monitoring and stop/resume additions; every v1 payload above stays valid.
 - `POST /api/v1/workers/{worker_id}/resume` — clears a pending stop request (either mode).
   `204`.
 - `GET /api/v1/workers` — registry snapshot for monitors: worker id, name, online, last seen,
-  root mappings, stop flag and `stop_mode` (`cancel`/`drain`/null), active clip, and the latest
-  heartbeat progress.
+  root mappings, machine identity (`machine_id`; issue #80), stop flag and `stop_mode`
+  (`cancel`/`drain`/null), active clip, and the latest heartbeat progress.
 - `GET /api/v1/summary?run_id=<id>` — run summary counts (completed, skipped, failed,
   review-needed), from a finished run or computed live.
 

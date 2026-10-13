@@ -63,6 +63,7 @@ class WorkerStatus:
     progress: JobProgress | None
     progress_at: datetime | None
     stop_mode: str | None = None
+    machine_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,7 @@ def parse_workers(payload: Mapping[str, Any]) -> tuple[WorkerStatus, ...]:
                 online=bool(entry.get("online")),
                 last_seen=_optional_datetime(entry.get("last_seen")),
                 roots=_str_map(entry.get("roots")),
+                machine_id=_optional_str(entry.get("machine_id")),
                 stop_requested=bool(entry.get("stop_requested")),
                 stop_mode=_optional_str(entry.get("stop_mode")),
                 active_root_id=_optional_str(active.get("root_id")),

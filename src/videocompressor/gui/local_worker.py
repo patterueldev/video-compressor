@@ -11,10 +11,11 @@ lives in :mod:`videocompressor.gui.local_worker_service`; rendering lives in
 :mod:`videocompressor.gui.local_worker_config`.
 
 Idempotency: never two local workers. A worker is only started when the
-registry shows no online worker with the same id (or the same root mapping),
-or when the app can prove the row is stale — ``stop()``/``shutdown()`` record
-the time they confirmed no app-managed worker runs, and a row whose last
-heartbeat predates that time is a dead registration, not a live node.
+registry shows no online worker with the same id, no registration from this
+machine (issue #80: registrations carry a machine identity; older agents fall
+back to the same root mapping), or when the app can prove the row is stale —
+``stop()``/``shutdown()`` record the time they confirmed no app-managed worker
+runs, and a row whose last heartbeat predates that time is a dead registration.
 
 The process side is reaped too (issue #70): before spawning the child, a
 process still running the generated ``local-worker.toml`` is terminated
@@ -35,6 +36,7 @@ from typing import Any, Protocol
 
 from videocompressor.controller.protocol import ControllerError
 from videocompressor.core.config import AppConfig
+from videocompressor.core.machine import machine_identity
 from videocompressor.gui.local_worker_config import (
     ERR_LOG_FILENAME,
     TOKEN_ENV_VAR,
@@ -44,9 +46,9 @@ from videocompressor.gui.local_worker_config import (
     service_command,
     worker_command,
 )
+from videocompressor.gui.local_worker_duplicate import find_duplicate
 from videocompressor.gui.local_worker_marker import (
     read_stopped_at,
-    stopped_before,
     write_stop_marker,
 )
 from videocompressor.gui.local_worker_processes import (
@@ -134,6 +136,7 @@ class LocalWorkerSupervisor:
         spawn: SpawnProcess | None = None,
         run_command: RunServiceCommand | None = None,
         processes: ProcessTable | None = None,
+        machine_id: str | None = None,
     ) -> None:
         self.config = config
         self.config_path = config_path
@@ -141,6 +144,7 @@ class LocalWorkerSupervisor:
         self._spawn = spawn if spawn is not None else spawn_child
         self._run_command = run_command if run_command is not None else run_service_command
         self._processes = processes if processes is not None else SystemProcessTable()
+        self._machine_id = machine_id if machine_id is not None else machine_identity()
         self._process: ProcessHandle | None = None
         self._last = LocalWorkerOutcome(STATE_STOPPED, "the local worker has not been started")
 
@@ -250,6 +254,8 @@ class LocalWorkerSupervisor:
     def _check_registry_duplicate(self) -> LocalWorkerOutcome | None:
         """An outcome when an online worker already covers this machine, else None.
 
+        Same worker id, or a registration from this machine, defers the start;
+        registrations from agents older than #80 keep the root-mapping fallback.
         A failure to read the registry fails closed: starting a duplicate just
         because the check was unavailable is worse than not starting.
         """
@@ -259,18 +265,18 @@ class LocalWorkerSupervisor:
             return self._settle(
                 STATE_ERROR, f"cannot check the worker registry: {describe_monitor_error(error)}"
             )
-        worker_id = self.config.local_worker.worker_id
-        roots = self._roots_mapping()
-        stopped_at = read_stopped_at(self.config_path)
-        for worker in workers:
-            if not worker.online or not (worker.worker_id == worker_id or worker.roots == roots):
-                continue
-            if stopped_at is not None and stopped_before(worker.last_seen, stopped_at):
-                continue  # a dead registration: heartbeat predates our confirmed stop
-            return self._settle(
-                STATE_ALREADY_RUNNING, f"worker {worker.worker_id!r} is already online"
-            )
-        return None
+        duplicate = find_duplicate(
+            workers,
+            worker_id=self.config.local_worker.worker_id,
+            roots=self._roots_mapping(),
+            local_machine=self._machine_id,
+            stopped_at=read_stopped_at(self.config_path),
+        )
+        if duplicate is None:
+            return None
+        return self._settle(
+            STATE_ALREADY_RUNNING, f"worker {duplicate.worker_id!r} is already online"
+        )
 
     def _ensure_service(self) -> LocalWorkerOutcome:
         """Install/refresh the keep-running service (idempotent per #51)."""

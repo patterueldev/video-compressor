@@ -26,6 +26,7 @@ def register(client: ControllerClient, worker_id: str = "node-a") -> dict:
         scratch_dir="/srv/scratch",
         thread_cap=2,
         version="0.1.0",
+        machine_id="node-a-host",
     )
 
 
@@ -47,6 +48,16 @@ def test_register_heartbeat_claim_complete_round_trip(server, seed_clip, manifes
     record = manifest.get_clip("archive", CLIP)
     assert record.state is JobState.COMPLETE
     assert record.output == Fingerprint(size_bytes=10, mtime_ns=1, digest="out")
+
+
+def test_register_carries_the_machine_identity(server, api):
+    client = ControllerClient(server.base_url, TOKEN)
+
+    register(client)
+
+    status, workers = api.get("/workers")
+    assert status == 200
+    assert workers["workers"][0]["machine_id"] == "node-a-host"
 
 
 def test_claim_returns_none_when_queue_is_empty(server):

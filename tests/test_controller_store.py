@@ -18,17 +18,26 @@ def test_worker_registry_round_trip(store, clock):
         scratch_dir="/srv/scratch",
         thread_cap=2,
         version="0.1.0",
+        machine_id="host-a",
     )
     assert row.worker_id == "homeserver"
     assert row.name == "Linux homeserver"
     assert row.roots == {"archive": "/srv/archive"}
     assert row.scratch_dir == "/srv/scratch"
     assert row.version == "0.1.0"
+    assert row.machine_id == "host-a"
     assert row.stop_requested is False
     assert row.last_seen == clock()
     assert store.get_worker("homeserver") == row
     assert store.get_worker("gap") is None
     assert [worker.worker_id for worker in store.list_workers()] == ["homeserver"]
+
+
+def test_machine_identity_refresh_and_clear(store):
+    row = store.upsert_worker("a", machine_id="host-a")
+    assert row.machine_id == "host-a"
+    # the latest registration is the truth: an old agent clears the identity
+    assert store.upsert_worker("a").machine_id is None
 
 
 def test_reregister_refreshes_and_clears_stop_flag(store, clock):
@@ -62,7 +71,7 @@ def test_stop_mode_round_trip_and_clear(store):
     assert row is not None and row.stop_mode is StopMode.CANCEL
 
 
-def test_legacy_database_migrates_the_stop_mode_column(tmp_path, clock):
+def test_legacy_database_migrates_the_added_worker_columns(tmp_path, clock):
     path = tmp_path / "legacy.sqlite"
     conn = sqlite3.connect(path)
     conn.execute(
@@ -95,9 +104,13 @@ def test_legacy_database_migrates_the_stop_mode_column(tmp_path, clock):
         assert row is not None
         assert row.stop_requested is True
         assert row.stop_mode is None  # pre-#74 rows normalize to cancel on read
+        assert row.machine_id is None  # pre-#80 rows carry no identity
 
         updated = store.set_stop_requested("legacy", True, mode=StopMode.DRAIN)
         assert updated is not None and updated.stop_mode is StopMode.DRAIN
+
+        re_registered = store.upsert_worker("legacy", machine_id="host-b")
+        assert re_registered.machine_id == "host-b"
     finally:
         store.close()
 

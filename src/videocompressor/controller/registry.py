@@ -54,6 +54,7 @@ class WorkerRegistryMixin:
             scratch_dir = _optional_str(payload, "scratch_dir")
             thread_cap = _optional_int(payload, "thread_cap", default=2)
             version = _optional_str(payload, "version")
+            machine_id = _optional_str(payload, "machine_id")
             self.store.upsert_worker(
                 worker_id,
                 name=name,
@@ -61,6 +62,7 @@ class WorkerRegistryMixin:
                 scratch_dir=scratch_dir,
                 thread_cap=thread_cap,
                 version=version,
+                machine_id=machine_id,
             )
             self._mark_online(worker_id)
             self._event("info", f"worker {worker_id} registered", worker_id=worker_id)
@@ -141,6 +143,7 @@ class WorkerRegistryMixin:
                         "scratch_dir": row.scratch_dir,
                         "thread_cap": row.thread_cap,
                         "version": row.version,
+                        "machine_id": row.machine_id,
                         "stop_requested": row.stop_requested,
                         "stop_mode": _stop_mode_value(row) if row.stop_requested else None,
                         "active": (
