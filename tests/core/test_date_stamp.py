@@ -27,6 +27,20 @@ from videocompressor.core.models import CaptureTimeMode, MediaInfo, MediaStream
 MODE = CaptureTimeMode.LOCAL_WALL_CLOCK
 TZ = "Asia/Manila"
 
+#: The instant the fake probes resolve: 09:05 in the template timezone.
+CAPTURE_WHEN = datetime(2024, 6, 14, 9, 5, tzinfo=ZoneInfo(TZ))
+
+
+def _as_birth_time(when: datetime) -> datetime:
+    """The naive local wall-clock value ``when`` reads back as on this runner.
+
+    Birth times are instants, so on a machine whose timezone is not the
+    template's the stamped value reads back as the local conversion rather
+    than the face value (CI runs in UTC). Seeding the fake ``read_birth``
+    through this helper keeps the classification tests timezone-independent.
+    """
+    return when.astimezone().replace(tzinfo=None)
+
 
 def _write(path: Path, payload: bytes = b"x") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,7 +104,7 @@ def test_sweep_stamps_the_resolved_capture_time(tmp_path: Path):
     assert [result.status for result in report.results] == [StampStatus.STAMPED]
     (path, when) = stamp.calls[0]
     assert path == video
-    assert when == datetime(2024, 6, 14, 9, 5, tzinfo=ZoneInfo(TZ))
+    assert when == CAPTURE_WHEN
     assert report.results[0].when == when
 
 
@@ -98,7 +112,9 @@ def test_second_sweep_reports_already_correct_without_stamping(tmp_path: Path):
     video = _write(tmp_path / "A.MP4")
     probe = ProbeSpy({video.name: _media()})
     stamp = StampSpy()
-    births = {video.name: datetime(2024, 6, 14, 9, 5, 0, 999999)}
+    # A stamped file reads back as the local wall clock of the instant; the
+    # sub-second noise proves the comparison is at second precision.
+    births = {video.name: _as_birth_time(CAPTURE_WHEN).replace(microsecond=999999)}
 
     report = sweep_folder(
         tmp_path, mode=MODE, timezone=TZ, probe=probe, stamp=stamp, read_birth=_births(births)
@@ -129,7 +145,7 @@ def test_since_filter_skips_older_files_without_probing(tmp_path: Path):
     new = _write(tmp_path / "NEW.MP4")
     probe = ProbeSpy({new.name: _media()})
     stamp = StampSpy()
-    births = {old.name: datetime(2020, 1, 1, 12, 0), new.name: datetime(2024, 6, 14, 9, 5)}
+    births = {old.name: datetime(2020, 1, 1, 12, 0), new.name: _as_birth_time(CAPTURE_WHEN)}
 
     report = sweep_folder(
         tmp_path,
@@ -267,11 +283,6 @@ def test_summarize_reports_stamped_and_failed_counts(tmp_path: Path):
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="birth times are macOS-only")
-def test_supported_matches_the_platform():
-    assert supported() is (sys.platform == "darwin")
-
-
-@pytest.mark.skipif(sys.platform != "darwin", reason="birth times are macOS-only")
 def test_real_stamp_round_trip_keeps_the_modification_time(tmp_path: Path):
     video = _write(tmp_path / "clip.mp4")
     target = datetime(2021, 5, 4, 12, 30, 45)
@@ -282,3 +293,35 @@ def test_real_stamp_round_trip_keeps_the_modification_time(tmp_path: Path):
     assert read_creation_time(video) == target
     after = video.stat()
     assert after.st_mtime_ns == before.st_mtime_ns
+
+
+# -- unsupported platforms (cross-platform: this is how Linux CI sees them) ----
+
+
+def test_supported_matches_the_platform():
+    assert supported() is (sys.platform == "darwin")
+
+
+def test_birth_times_are_unavailable_off_macos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    video = _write(tmp_path / "A.MP4")
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    assert supported() is False
+    assert read_creation_time(video) is None
+    assert stamp_creation_time(video, datetime(2021, 5, 4, 12, 30, 45)) is False
+
+
+def test_sweep_reports_unsupported_platform_failures_without_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    video = _write(tmp_path / "A.MP4")
+    probe = ProbeSpy({video.name: _media()})
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    report = sweep_folder(tmp_path, mode=MODE, timezone=TZ, probe=probe)  # real seams
+
+    assert report.stamped == 0
+    assert report.failed == 1
+    result = report.results[0]
+    assert result.status is StampStatus.FAILED
+    assert result.error == "the creation date was not set"

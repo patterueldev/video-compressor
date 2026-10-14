@@ -24,8 +24,17 @@ def _report(tmp_path: Path, results: tuple[StampResult, ...], *, ignored: int = 
     )
 
 
+@pytest.fixture
+def macos_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pretend the runner is macOS so the sweep plumbing is testable anywhere."""
+    monkeypatch.setattr(fixdates, "supported", lambda: True)
+
+
 def test_fix_dates_prints_every_count_and_up_to_ten_failures(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    macos_platform: None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ):
     folder = tmp_path / "compressed"
     folder.mkdir()
@@ -72,7 +81,10 @@ def test_fix_dates_prints_every_count_and_up_to_ten_failures(
 
 
 def test_dry_run_is_plumbed_through(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    macos_platform: None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ):
     folder = tmp_path / "compressed"
     folder.mkdir()
@@ -102,7 +114,10 @@ def test_dry_run_is_plumbed_through(
 
 
 def test_a_folder_that_is_not_a_directory_is_a_usage_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    macos_platform: None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ):
     calls: list[object] = []
     monkeypatch.setattr(fixdates, "sweep_folder", lambda *a, **k: calls.append(1))
