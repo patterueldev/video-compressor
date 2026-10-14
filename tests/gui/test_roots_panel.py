@@ -6,9 +6,11 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QListWidget, QMessageBox
 
 from videocompressor.core.config import AppConfig, load_config
+from videocompressor.core.date_stamp import StampReport, StampResult, StampStatus
 from videocompressor.core.manifest import Manifest
 from videocompressor.core.models import ArchiveRoot, ClipRecord, Fingerprint, JobState
 from videocompressor.gui import roots_panel
@@ -216,3 +218,137 @@ def test_remove_selected_without_a_manifest_names_the_uncertainty(
 
     assert app_config.roots == []
     assert "could not be checked" in spy.questions[0]
+
+
+# -- creation-date action (issue #86) ------------------------------------------
+
+
+class FakeDateRunner(QObject):
+    """Records sweep requests instead of stamping anything."""
+
+    started = Signal()
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, *, accept: bool = True) -> None:
+        super().__init__()
+        self.accept = accept
+        self.busy = False
+        self.requests: list[object] = []
+
+    def start(self, request) -> bool:
+        if self.busy:
+            return False
+        self.busy = True
+        self.requests.append(request)
+        if not self.accept:
+            self.busy = False
+            return False
+        self.started.emit()
+        return True
+
+    def emit_finished(self, report) -> None:
+        self.busy = False
+        self.finished.emit(report)
+
+    def emit_failed(self, message: str) -> None:
+        self.busy = False
+        self.failed.emit(message)
+
+
+def test_fix_dates_button_follows_the_selection(config, archive, qapp):
+    app_config, config_path = config
+    panel = RootsPanel(app_config, config_path, date_runner=FakeDateRunner())
+    panel.register_from_values("camera", "Camera", archive)
+    listed = panel.findChild(QListWidget)
+
+    assert not panel.fix_dates_button.isEnabled()
+    listed.setCurrentRow(0)
+    assert panel.fix_dates_button.isEnabled()
+    listed.setCurrentRow(-1)
+    assert not panel.fix_dates_button.isEnabled()
+
+
+def test_fix_creation_dates_confirms_and_submits(config, archive, qapp, monkeypatch):
+    app_config, config_path = config
+    runner = FakeDateRunner()
+    panel = RootsPanel(app_config, config_path, date_runner=runner)
+    panel.register_from_values("camera", "Camera archive", archive)
+    spy = BoxSpy(answer=BoxSpy.StandardButton.Yes)
+    monkeypatch.setattr(roots_panel, "QMessageBox", spy)
+    panel.findChild(QListWidget).setCurrentRow(0)
+
+    assert panel.fix_creation_dates() is True
+
+    (request,) = runner.requests
+    assert request.folder == archive
+    assert request.mode is app_config.capture_time.mode
+    assert request.timezone == "Asia/Manila"
+    assert str(archive) in spy.questions[0]
+    assert "Modification dates are untouched" in spy.questions[0]
+    assert "files outside this folder are never visited" in spy.questions[0]
+    assert "setting creation dates" in panel.status_label.text()
+
+    report = StampReport(
+        folder=archive,
+        mode=app_config.capture_time.mode,
+        timezone="Asia/Manila",
+        since=None,
+        dry_run=False,
+        results=(StampResult(archive / "A.MP4", StampStatus.STAMPED),),
+    )
+    runner.emit_finished(report)
+
+    assert panel.status_label.text() == "creation dates: 1 stamped, 0 failed"
+
+
+def test_fix_creation_dates_cancel_submits_nothing(config, archive, qapp, monkeypatch):
+    app_config, config_path = config
+    runner = FakeDateRunner()
+    panel = RootsPanel(app_config, config_path, date_runner=runner)
+    panel.register_from_values("camera", "Camera", archive)
+    spy = BoxSpy(answer=BoxSpy.StandardButton.No)
+    monkeypatch.setattr(roots_panel, "QMessageBox", spy)
+    panel.findChild(QListWidget).setCurrentRow(0)
+
+    assert panel.fix_creation_dates() is False
+
+    assert runner.requests == []
+    assert spy.questions  # the operator was asked
+
+
+def test_fix_creation_dates_without_a_selection(config, qapp):
+    app_config, config_path = config
+    runner = FakeDateRunner()
+    panel = RootsPanel(app_config, config_path, date_runner=runner)
+
+    assert panel.fix_creation_dates() is False
+
+    assert panel.last_error == "select a root to fix"
+    assert runner.requests == []
+
+
+def test_fix_creation_dates_refuses_while_running(config, archive, qapp, monkeypatch):
+    app_config, config_path = config
+    runner = FakeDateRunner()
+    runner.busy = True
+    panel = RootsPanel(app_config, config_path, date_runner=runner)
+    panel.register_from_values("camera", "Camera", archive)
+    spy = BoxSpy(answer=BoxSpy.StandardButton.Yes)
+    monkeypatch.setattr(roots_panel, "QMessageBox", spy)
+    panel.findChild(QListWidget).setCurrentRow(0)
+
+    assert panel.fix_creation_dates() is False
+
+    assert "already in progress" in panel.last_error
+    assert runner.requests == []
+
+
+def test_fix_creation_dates_reports_failures_in_the_panel(config, archive, qapp):
+    app_config, config_path = config
+    runner = FakeDateRunner()
+    panel = RootsPanel(app_config, config_path, date_runner=runner)
+
+    runner.emit_failed("folder disappeared")
+
+    assert panel.status_label.text() == "creation dates: folder disappeared"

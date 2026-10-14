@@ -30,8 +30,13 @@ from PySide6.QtWidgets import (
 )
 
 from videocompressor.core.config import AppConfig, register_root, save_config
+from videocompressor.core.date_stamp import StampReport, summarize
 from videocompressor.core.models import ArchiveRoot
 from videocompressor.core.scan import derive_root_id
+from videocompressor.gui.date_stamp_runner import (
+    DateStampRunner,
+    manual_sweep_request,
+)
 from videocompressor.gui.root_service import remove_root, root_job_counts
 
 
@@ -103,6 +108,7 @@ class RootsPanel(QWidget):
         config_path: Path,
         parent: QWidget | None = None,
         manifest_path: Path | None = None,
+        date_runner: DateStampRunner | None = None,
     ) -> None:
         super().__init__(parent)
         self.config = config
@@ -116,6 +122,18 @@ class RootsPanel(QWidget):
         self.remove_button = QPushButton("Remove root…")
         self.remove_button.setEnabled(False)
         self.remove_button.clicked.connect(self.remove_selected)
+        self.fix_dates_button = QPushButton("Fix creation dates…")
+        self.fix_dates_button.setToolTip(
+            "Set each video's creation date from its embedded capture time"
+        )
+        self.fix_dates_button.setEnabled(False)
+        self.fix_dates_button.clicked.connect(self.fix_creation_dates)
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        self.date_runner = date_runner if date_runner is not None else DateStampRunner(self)
+        self.date_runner.started.connect(self._on_date_stamp_started)
+        self.date_runner.finished.connect(self._on_date_stamp_finished)
+        self.date_runner.failed.connect(self._on_date_stamp_failed)
 
         title = QLabel("Archive roots (this Mac)")
         layout = QVBoxLayout(self)
@@ -123,6 +141,8 @@ class RootsPanel(QWidget):
         layout.addWidget(self._list)
         layout.addWidget(register)
         layout.addWidget(self.remove_button)
+        layout.addWidget(self.fix_dates_button)
+        layout.addWidget(self.status_label)
         self.refresh()
 
     def refresh(self) -> None:
@@ -132,10 +152,15 @@ class RootsPanel(QWidget):
             item = QListWidgetItem(f"{root.name} ({root.id})\n{root.path}")
             item.setToolTip(mapping_reminder(root))
             self._list.addItem(item)
-        self.remove_button.setEnabled(self._list.currentRow() >= 0)
+        self._update_action_buttons()
 
-    def _on_selection_changed(self, row: int) -> None:
-        self.remove_button.setEnabled(row >= 0)
+    def _on_selection_changed(self, _row: int) -> None:
+        self._update_action_buttons()
+
+    def _update_action_buttons(self) -> None:
+        selected = 0 <= self._list.currentRow() < len(self.config.roots)
+        self.remove_button.setEnabled(selected)
+        self.fix_dates_button.setEnabled(selected and not self.date_runner.busy)
 
     def remove_selected(self) -> ArchiveRoot | None:
         """Remove the selected root after the non-terminal-clip guard.
@@ -191,6 +216,52 @@ class RootsPanel(QWidget):
             f"Remove archive root {root.name!r} ({root.id})?\n{notes}",
         )
         return answer == QMessageBox.StandardButton.Yes
+
+    # -- creation dates (issue #86) -----------------------------------------
+
+    def fix_creation_dates(self) -> bool:
+        """Sweep the selected root's folder in the background after confirmation.
+
+        Returns ``True`` when the sweep was submitted; ``last_error`` names a
+        refusal (no selection, cancelled, or a sweep already running). Only the
+        chosen root's folder is visited: creation dates come from each video's
+        embedded capture time, modification dates are untouched, and sources
+        outside the folder are never stamped.
+        """
+        row = self._list.currentRow()
+        if row < 0 or row >= len(self.config.roots):
+            self.last_error = "select a root to fix"
+            return False
+        root = self.config.roots[row]
+        if not self._confirm_fix_dates(root):
+            return False
+        if not self.date_runner.start(manual_sweep_request(self.config, root.path)):
+            self.last_error = "a creation-date run is already in progress"
+            return False
+        self.last_error = None
+        return True
+
+    def _confirm_fix_dates(self, root: ArchiveRoot) -> bool:
+        answer = QMessageBox.question(
+            self,
+            "Video Compressor",
+            f"Set the creation dates of the videos under {root.path} from their embedded"
+            " capture times?\nModification dates are untouched, and files outside this"
+            " folder are never visited.",
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _on_date_stamp_started(self) -> None:
+        self.status_label.setText("setting creation dates…")
+        self._update_action_buttons()
+
+    def _on_date_stamp_finished(self, report: StampReport) -> None:
+        self.status_label.setText(f"creation dates: {summarize(report)}")
+        self._update_action_buttons()
+
+    def _on_date_stamp_failed(self, message: str) -> None:
+        self.status_label.setText(f"creation dates: {message}")
+        self._update_action_buttons()
 
     def register_from_values(self, root_id: str, name: str, path: Path) -> ArchiveRoot | None:
         """Validate, persist, and list one root; ``None`` with ``last_error`` set on failure."""

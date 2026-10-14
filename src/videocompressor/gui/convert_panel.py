@@ -14,6 +14,7 @@ surfaces configured nodes whose mapping does not cover a root in the batch.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Signal
@@ -47,6 +48,7 @@ from videocompressor.gui.convert_service import (
     build_enqueue_payload,
     effective_delete_original,
 )
+from videocompressor.gui.date_stamp_runner import BatchSweepDecision, decide_batch_sweep
 from videocompressor.gui.monitor_client import MonitorUnavailable, describe_monitor_error
 from videocompressor.gui.root_service import (
     format_node_warning,
@@ -84,6 +86,8 @@ class ConvertPanel(QWidget):
         self.selection = ConvertSelection(lambda: self.config.roots)
         self._delete_choice = False
         self._last_dir = Path.home()
+        #: The post-batch sweep decision for the last enqueue (issue #86).
+        self.last_batch: BatchSweepDecision | None = None
 
         # -- selection -----------------------------------------------------
         self.drop_zone = ConvertDropZone(self)
@@ -237,12 +241,20 @@ class ConvertPanel(QWidget):
         payload = build_enqueue_payload(
             ready, destination, template_id=template_id, delete_original=delete_original
         )
+        enqueued_at = datetime.now().astimezone()
         try:
             body = self.client.enqueue(payload)
         except (ControllerError, MonitorUnavailable, OSError) as error:
             self._fail(describe_monitor_error(error))
             return
         outcome = self.selection.apply_enqueue_result(body)
+        self.last_batch = (
+            decide_batch_sweep(
+                self.config, destination, enqueued_at=enqueued_at, queued=outcome.queued
+            )
+            if outcome.queued
+            else None
+        )
         self._refresh_table()
         notes: list[str] = []
         if resolution.registered is not None:
