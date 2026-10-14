@@ -41,7 +41,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   issue #80),
   `ffmpeg` (two-pass x265 encode), `validate`, `replace`, `place` (destination placement),
   `records` (destination completion records), `recover`, `config` (per-user TOML),
-  `nodes` (per-node entries: SSH target, root mappings; issue #54).
+  `nodes` (per-node entries: SSH target, root mappings; issue #54), and `date_stamp`
+  (filesystem birth-time read/stamp and the capture-time sweep; issue #86).
 - `controller`: `server` (facade), `http` (HTTP plumbing),
   `registry`/`jobs`/`enqueue`/`sweep` (mixins), `store` (SQLite bookkeeping),
   `store_schema` (store DDL, migration, and row codecs; issue #74),
@@ -60,7 +61,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   with the issue #70 additions `local_worker_marker` (stop-state persistence),
   `local_worker_processes` (process-table stale-child sweep), and `shutdown_signals`
   (SIGTERM/SIGINT quit), and the issue #80 addition `local_worker_duplicate`
-  (machine-aware duplicate decision).
+  (machine-aware duplicate decision), and the issue #86 addition `date_stamp_runner`
+  (creation-date sweep execution plus the pure post-batch decisions).
 - `worker`: `agent` (register/heartbeat/claim loop and the stop modes: cancel vs drain),
   `client` (controller HTTP v1),
   `outcome` (per-job result type), `pipeline` (per-job copy → encode → validate → replace),
@@ -75,7 +77,7 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   wheel and the truthful install report; issue #67), `bootstrap` (`vc node` orchestrator;
   the #54 backend).
 - `cli`: `app` (parser + command registry), one module per subcommand (`probe`, `scan`,
-  `worker`, `node`, `controller`, `gui`), `constants` (exit codes).
+  `fixdates`, `worker`, `node`, `controller`, `gui`), `constants` (exit codes).
 
 ### Remote node bootstrap (issue #53)
 
@@ -172,6 +174,22 @@ no longer makes the operator visit the Library form first:
   not cover a root used by the batch, pointing at `vc node install`. Those nodes cannot process
   the new root until the mapping is added; the root-aware claim filter (issue #83) keeps
   unmapped-root clips queued instead of failing them.
+
+### Creation-date stamping (issue #86)
+
+Converted outputs carry the clip's capture time inside the container, but a fresh file's
+filesystem creation (birth) date is the moment it was written, so a mixed media folder sorted by
+"Date Created" shows conversion dates. `core/date_stamp.py` owns the birth-time logic: it reads
+macOS `st_birthtime`, stamps the creation time natively (`setattrlist`/`ATTR_CMN_CRTIME`, no
+external tools), and sweeps a folder — resolving each video's capture time from its embedded
+`creation_time` under the configured capture mode and the default template's timezone — with a
+`since` filter that skips known-old files without probing and second-precision idempotence. The
+modification date stays the conversion time and is never written. This is an app-side (macOS)
+step: no worker, controller, or protocol changes. The Library's "Fix creation dates…" action runs
+an explicit sweep of the selected root, and after a batch enqueued to an output root (never a
+same-folder destination) the GUI sweeps that root once the monitor shows the queue drained,
+reporting the outcome in the status area; `gui/date_stamp_runner.py` holds the runner and the pure
+decisions, and `vc fix-dates FOLDER [--dry-run]` is the CLI equivalent.
 
 ## Archive scan artifacts (issue #3, optional tooling)
 

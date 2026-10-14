@@ -17,13 +17,20 @@ from pathlib import Path
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QTabWidget, QWidget
 
 from videocompressor.core.config import AppConfig
+from videocompressor.core.date_stamp import summarize
 from videocompressor.gui.controller_session import ControllerSession
 from videocompressor.gui.convert_panel import ConvertPanel
+from videocompressor.gui.date_stamp_runner import (
+    BatchSweepWatcher,
+    DateStampRunner,
+    settled_total,
+    sweep_request_for,
+)
 from videocompressor.gui.local_worker import LocalWorkerSupervisor
 from videocompressor.gui.local_worker_panel import LocalWorkerPanel
 from videocompressor.gui.main_window import MainWindow
 from videocompressor.gui.monitor_panel import MonitorPanel
-from videocompressor.gui.monitor_service import MonitorSession
+from videocompressor.gui.monitor_service import MonitorSession, MonitorSnapshot
 from videocompressor.gui.nodes_panel import NodesPanel
 
 __all__ = ["MonitorWindow"]
@@ -49,6 +56,7 @@ class MonitorWindow(QMainWindow):
         panel: MonitorPanel | None = None,
         convert: ConvertPanel | None = None,
         nodes: NodesPanel | None = None,
+        date_runner: DateStampRunner | None = None,
         supervisor: LocalWorkerSupervisor | None = None,
         local_worker: QWidget | None = None,
         parent: QWidget | None = None,
@@ -110,6 +118,13 @@ class MonitorWindow(QMainWindow):
         self.convert.enqueued.connect(self._on_enqueued)
         self.convert.roots_changed.connect(self._on_convert_roots_changed)
         self.setCentralWidget(self.tabs)
+        self._batch_sweep: BatchSweepWatcher | None = None
+        self.date_runner = date_runner if date_runner is not None else DateStampRunner(self)
+        self.date_runner.finished.connect(self._on_dates_stamped)
+        self.date_runner.failed.connect(self._on_dates_failed)
+        monitor_runner = getattr(self.monitor, "runner", None)
+        if monitor_runner is not None:
+            monitor_runner.updated.connect(self._on_batch_snapshot)
         if self.local_worker is not None:
             self.monitor.runner.updated.connect(self.local_worker.apply_snapshot)
             roots_panel = getattr(self.library, "roots_panel", None)
@@ -119,9 +134,47 @@ class MonitorWindow(QMainWindow):
     # -- convert flow ------------------------------------------------------
 
     def _on_enqueued(self, _queued: int) -> None:
-        """Show the Monitor tab and poll immediately after a successful enqueue."""
+        """Show the Monitor tab, poll immediately, and arm the sweep (issue #86)."""
         self.tabs.setCurrentWidget(self.monitor)
         self.monitor.refresh_now()
+        self._arm_batch_sweep()
+
+    def _arm_batch_sweep(self) -> None:
+        """Arm the post-batch creation-date sweep for the batch just enqueued."""
+        self._batch_sweep = None
+        decision = getattr(self.convert, "last_batch", None)
+        if decision is None:
+            return
+        if decision.note is not None:
+            self.statusBar().showMessage(decision.note)
+            return
+        plan = decision.plan
+        if plan is None:
+            return
+        snapshot_getter = getattr(self.monitor, "snapshot", None)
+        snapshot = snapshot_getter() if callable(snapshot_getter) else None
+        baseline = settled_total(snapshot) if snapshot is not None else 0
+        self._batch_sweep = BatchSweepWatcher(plan=plan, baseline_settled=baseline)
+
+    def _on_batch_snapshot(self, snapshot: MonitorSnapshot) -> None:
+        """Start the armed sweep once the monitor shows the queue drained."""
+        watcher = self._batch_sweep
+        if watcher is None:
+            return
+        plan = watcher.observe(snapshot)
+        if plan is None:
+            return
+        self._batch_sweep = None
+        self.statusBar().showMessage(f"creation dates: checking {plan.folder}…")
+        self.date_runner.start(sweep_request_for(plan))
+
+    def _on_dates_stamped(self, report) -> None:
+        """Report a finished sweep in the status area; never a dialog."""
+        self.statusBar().showMessage(f"creation dates: {summarize(report)}")
+
+    def _on_dates_failed(self, message: str) -> None:
+        """Report a failure without blocking the UI."""
+        self.statusBar().showMessage(f"creation dates: {message}")
 
     def _on_convert_roots_changed(self) -> None:
         """Follow a convert-flow auto-registration in the Library and local worker."""

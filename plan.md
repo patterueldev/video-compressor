@@ -119,6 +119,10 @@ convert flow processes the files the operator selected.
     placed file. The source is deleted only when the job asked for it — one atomic delete, after
     the placed output validated and was recorded.
   - If any step fails, preserve the original or backup so the source can be restored.
+- Set each converted output's filesystem creation date from the clip's embedded capture time
+  (app-side on macOS, after the batch or through the Library fix-up action / `vc fix-dates`);
+  the modification date stays the conversion time. No automatic path stamps originals: only the
+  batch's output root is swept for outputs written during that batch.
 - Before any replacement or deletion, confirm the source still matches the fingerprint captured
   when the job was claimed. If another process changed it, do not overwrite or delete it; return
   the job to review.
