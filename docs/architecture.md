@@ -41,6 +41,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
   issue #80),
   `ffmpeg` (two-pass x265 encode), `validate`, `replace`, `place` (destination placement),
   `records` (destination completion records), `recover`, `config` (per-user TOML),
+  `template_toml` (per-template TOML codec, including the name-pattern fallback; issue #87),
+  `naming` (per-template output-name patterns: tokens, validation, rendering; issue #87),
   `nodes` (per-node entries: SSH target, root mappings; issue #54), and `date_stamp`
   (filesystem birth-time read/stamp and the capture-time sweep; issue #86).
 - `controller`: `server` (facade), `http` (HTTP plumbing),
@@ -66,7 +68,8 @@ Post-wave-1 layout (issues #20–#22 split the CLI, the controller server, and t
 - `worker`: `agent` (register/heartbeat/claim loop and the stop modes: cancel vs drain),
   `client` (controller HTTP v1),
   `outcome` (per-job result type), `pipeline` (per-job copy → encode → validate → replace),
-  `destination` (destination decode/resolve/place/delete), `transfer` (pilot delivery and
+  `destination` (placement, skip/collision, and verified delete), `destination_paths`
+  (destination folder and output-name resolution; issue #87), `transfer` (pilot delivery and
   replacement confirm), `config` (per-node TOML), `scratch` (local job dirs),
   `units`/`service`/`service_platform` (launchd/systemd unit rendering and service
   install/status/uninstall; issue #51), and `toolpaths` (ffmpeg/ffprobe directory detection for
@@ -271,7 +274,7 @@ be passed instead through the same seam.
 Convert jobs may carry a destination — a registered output root plus relative path, a custom
 folder on the node, or the source's own folder (which is the verified swap above) — and a
 `delete_original` flag. The worker decodes and resolves the claim spec per node
-(`worker/destination.py`); a custom destination is placed by `core/place.py`:
+(`worker/destination_paths.py`); a custom destination is placed by `core/place.py`:
 
 1. stage `<clip name>.vc-tmp.<job_id>` beside the destination file, verify it by full read-back
    SHA-256, and validate it at the destination with the full validator;
@@ -281,6 +284,15 @@ folder on the node, or the source's own folder (which is the verified swap above
 4. delete the source only when the job asked for it: one atomic unlink, only after the placed
    output validated and was recorded, and only while the source still matches the fingerprint
    captured at claim (`delete_source_verified`).
+
+A destination spec names a **folder**, never a file (issue #87). An `output_root` destination
+with a non-empty `relative_path` places the output inside that folder
+(`root/<relative_path>/<name>`); an omitted or empty `relative_path` is the mirror form and keeps
+the source's own archive-relative folders under the root (`root/<source dirs>/<name>`, the root
+itself when the source sits at the root), byte-identical to the pre-#87 behavior. `<name>` is the
+source clip's file name, or — when the claim carries a non-default `naming` pattern (below) — the
+rendered pattern plus the source's suffix. The same rendered path is used by placement, skip, and
+resume; sources and already-placed outputs are never renamed.
 
 Records live in a hidden `.vc-records/` folder inside the destination directory (issue #78);
 `read_record` tries that location first and falls back to a record written beside the output by
@@ -436,6 +448,21 @@ replace-at-source flow. The destination object carries `kind` plus, for an outpu
 `root_id` and an optional `relative_path`. Worker clients ignore fields they do not use, so the
 addition stays backwards compatible.
 
+`naming` (issue #87) is additive and optional: when the resolved template's output name pattern
+is not the default `{name}`, the claim additionally carries
+
+```json
+"naming": {"pattern": "{date}_{name}", "timezone": "Asia/Manila", "capture_mode": "local_wall_clock"}
+```
+
+The worker renders the pattern into the output file name for output-folder destinations (same
+name used by placement, skip, and resume), using the claim's `capture_time` first and the
+source's raw `creation_time` tag — parsed under `capture_mode` in `timezone` — as the fallback;
+a pattern that needs a capture time when none can be found fails that clip visibly. Workers older
+than #87 ignore the object (outputs keep their source names) and a new worker on an older
+controller sees no object, so a mixed-version fleet degrades to `{name}` in both directions. A
+malformed object is treated as absent.
+
 #### `POST /api/v1/jobs/complete`
 
 Final replacement is done and validated at the source path. `204` on success; `409` when the
@@ -527,13 +554,14 @@ The batch-level fields are validated before anything is written, so a malformed 
 rewritten by an enqueue. `job_id` is informational (`<root_id>:<relative_path>`); the durable
 identity stays the pair. Each request logs one `info` event with queued/skipped/rejected counts.
 
-Destination specs name the output **folder** only; the output filename and collision handling
-belong to the worker pipeline (#40).
+Destination specs name the output **folder** only; the output filename (the source clip's name,
+or the rendered template name pattern, issue #87) and collision handling belong to the worker
+pipeline (#40).
 
 | Spec | Meaning |
 | --- | --- |
 | `{"kind": "same_folder"}` | the verified swap: the output replaces the source at its own path; requires `delete_original: true` |
-| `{"kind": "output_root", "root_id": "<id>", "relative_path": "<folder>"}` | a registered output root plus a root-relative POSIX folder; an omitted `relative_path` mirrors the source's archive-relative path |
+| `{"kind": "output_root", "root_id": "<id>", "relative_path": "<folder>"}` | a registered output root plus a root-relative POSIX folder; the output is placed as `<folder>/<name>`; an omitted or empty `relative_path` mirrors the source's own archive-relative folders |
 
 The worker also decodes a node-local `custom_folder` spec
 (`{"kind": "custom_folder", "path": "<absolute folder>"}`, issue #40); this endpoint does not

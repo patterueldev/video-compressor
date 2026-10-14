@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ import shiboken6
 from PySide6.QtWidgets import QWidget
 
 from videocompressor.core.config import AppConfig, add_template, register_root
+from videocompressor.core.models import TemplateSettings
 from videocompressor.gui import convert_panel
 from videocompressor.gui.monitor_client import MonitorUnavailable
 
@@ -244,6 +246,41 @@ def test_a_manual_delete_choice_survives_the_same_folder_mode(qapp, tmp_path, pa
     panel.mode_combo.setCurrentIndex(0)
 
     assert panel.delete_checkbox.isChecked()
+
+
+# -- output name preview (issue #87) ------------------------------------------
+
+
+def test_name_preview_follows_the_selected_template(qapp, tmp_path, panel_factory):
+    panel, _client, config = panel_factory()
+
+    assert "GS010001.MP4" in panel.destination.name_preview.text()
+
+    config.templates["motorcycle"] = replace(
+        TemplateSettings(), name_pattern="{date}_{name}"
+    )
+    config.templates["dated"] = replace(
+        TemplateSettings(), name_pattern="{datetime:%Y%m%d%H%M}_{name}"
+    )
+    panel.refresh()
+
+    assert "{date}_{name}" in panel.destination.name_preview.text()
+    assert "20250419_GS010001.MP4" in panel.destination.name_preview.text()
+
+    panel.template_combo.setCurrentText("dated")
+
+    assert "202504192117_GS010001.MP4" in panel.destination.name_preview.text()
+
+
+def test_name_preview_hides_for_the_same_folder_mode(qapp, tmp_path, panel_factory):
+    panel, _client, _config = panel_factory()
+    assert panel.destination.name_preview.text()
+
+    panel.mode_combo.setCurrentIndex(2)  # Same folder as source
+    assert panel.destination.name_preview.text() == ""
+
+    panel.mode_combo.setCurrentIndex(0)
+    assert "GS010001.MP4" in panel.destination.name_preview.text()
 
 
 # -- enqueue -----------------------------------------------------------------

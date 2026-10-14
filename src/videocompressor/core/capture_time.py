@@ -40,7 +40,7 @@ def resolve_capture_time(
     produces ``MISSING_TIMESTAMP``. Unparseable values are treated as missing and
     the raw value is kept for diagnosis.
     """
-    zone = _load_zone(timezone)
+    _zone = _load_zone(timezone)  # an unknown timezone is an error even without candidates
     candidates = _creation_time_candidates(media)
     if not candidates:
         return CaptureTime(when=None, mode=mode, issue=CaptureIssue.MISSING_TIMESTAMP)
@@ -48,7 +48,7 @@ def resolve_capture_time(
     first_raw, first_source = candidates[0]
     resolved: list[tuple[datetime, str, str]] = []
     for raw, source in candidates:
-        when = _parse_timestamp(raw, mode=mode, zone=zone)
+        when = interpret_timestamp(raw, mode=mode, timezone=timezone)
         if when is not None:
             resolved.append((when, raw, source))
 
@@ -71,6 +71,21 @@ def resolve_capture_time(
 
     when, raw, source = resolved[0]
     return CaptureTime(when=when, raw=raw, source=source, mode=mode)
+
+
+def interpret_timestamp(
+    raw: str, *, mode: CaptureTimeMode, timezone: str
+) -> datetime | None:
+    """Parse one raw ``creation_time`` value, or return ``None`` when it is invalid.
+
+    The public parsing rule :func:`resolve_capture_time` applies to every
+    candidate: a trailing ``Z``/``z`` reads as UTC, a value without an offset is
+    local wall-clock time in ``timezone``, and a UTC-offset value under
+    ``local_wall_clock`` keeps its face value in ``timezone`` (GoPro writes
+    local wall-clock time with a trailing ``Z``). Raises ``ValueError`` for an
+    unknown timezone name.
+    """
+    return _parse_timestamp(raw, mode=mode, zone=_load_zone(timezone))
 
 
 def bucket_for(

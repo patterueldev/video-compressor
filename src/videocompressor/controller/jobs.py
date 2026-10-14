@@ -3,7 +3,7 @@
 Claim/complete/fail plus the manifest stage-transition helpers, moved verbatim
 from ``controller/server.py`` (issue #21). The methods operate on the state
 created by ``ControllerServer.__init__`` (``store``, ``manifest``, ``templates``,
-``_lock``, ``_progress``, ``_clock``, ``_active_run_id``) and on shared lookups
+``_capture_mode``, ``_lock``, ``_progress``, ``_clock``, ``_active_run_id``) and on shared lookups
 kept on the facade (``_find_clip``, ``_event``). The mixin has no ``__init__``
 of its own.
 """
@@ -32,6 +32,7 @@ from videocompressor.core.models import (
     TemplateSettings,
     destination_to_dict,
 )
+from videocompressor.core.naming import DEFAULT_PATTERN
 
 #: Progress phases a worker reports that also advance the manifest stage.
 _PHASE_STATES = {
@@ -104,6 +105,14 @@ class JobDispatchMixin:
                 # legacy/script-seeded claims omit both (worker contract, #40).
                 job["destination"] = destination_to_dict(record.destination)
                 job["delete_original"] = record.delete_original
+            if template.name_pattern != DEFAULT_PATTERN:
+                # Additive output-name spec (issue #87); omitted for the
+                # default pattern so existing setups keep byte-identical jobs.
+                job["naming"] = {
+                    "pattern": template.name_pattern,
+                    "timezone": template.timezone,
+                    "capture_mode": str(self._capture_mode),
+                }
             return {"job": job}
 
     def complete(self, payload: Mapping[str, Any]) -> None:

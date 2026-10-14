@@ -14,12 +14,12 @@ save emits the new shape only.
 The GUI adds registered archive roots (issue #8) plus template create/duplicate/rename
 helpers; every helper validates its input before the caller writes the file. The Nodes
 tab (issue #54) adds ``[[nodes]]`` entries via ``core.nodes``, and the ``[local_worker]``
-section (issue #52) is the app-managed local worker's setting.
+section (issue #52) is the app-managed local worker's setting. The per-template TOML
+codec lives in :mod:`videocompressor.core.template_toml` (issue #87).
 """
 
 from __future__ import annotations
 
-import logging
 import re
 import tomllib
 from collections.abc import Mapping, Sequence
@@ -32,12 +32,11 @@ import tomli_w
 from videocompressor.core.models import (
     ArchiveRoot,
     CaptureTimeMode,
-    OriginalHandling,
     TemplateSettings,
 )
+from videocompressor.core.naming import validate_pattern
 from videocompressor.core.nodes import NodeEntry, nodes_from_toml, nodes_to_toml
-
-_log = logging.getLogger("videocompressor.core")
+from videocompressor.core.template_toml import template_from_toml, template_to_toml
 
 DEFAULT_TEMPLATE_NAME = "motorcycle"
 
@@ -160,6 +159,7 @@ def validate_template(settings: TemplateSettings) -> list[str]:
         ZoneInfo(settings.timezone)
     except (ZoneInfoNotFoundError, ValueError):
         problems.append(f"unknown timezone {settings.timezone!r}")
+    problems.extend(validate_pattern(settings.name_pattern))
     return problems
 
 
@@ -257,7 +257,7 @@ def _config_to_toml(config: AppConfig) -> dict[str, object]:
     document: dict[str, object] = {
         "capture_time": {"mode": str(config.capture_time.mode)},
         "templates": {
-            name: _template_to_toml(template) for name, template in config.templates.items()
+            name: template_to_toml(template) for name, template in config.templates.items()
         },
     }
     if config.roots:
@@ -279,18 +279,6 @@ def _config_to_toml(config: AppConfig) -> dict[str, object]:
     return document
 
 
-def _template_to_toml(template: TemplateSettings) -> dict[str, object]:
-    return {
-        "output_height": template.output_height,
-        "video_bitrate_kbps": template.video_bitrate_kbps,
-        "timezone": template.timezone,
-        "audio_codec": template.audio_codec,
-        "audio_bitrate_kbps": template.audio_bitrate_kbps,
-        "ffmpeg_preset": template.ffmpeg_preset,
-        "original_handling": str(template.original_handling),
-    }
-
-
 def _config_from_toml(data: Mapping[str, object]) -> AppConfig:
     config = AppConfig()
 
@@ -302,7 +290,7 @@ def _config_from_toml(data: Mapping[str, object]) -> AppConfig:
     templates = data.get("templates")
     if isinstance(templates, Mapping):
         parsed = {
-            str(name): _template_from_toml(str(name), entry)
+            str(name): template_from_toml(str(name), entry)
             for name, entry in templates.items()
             if isinstance(entry, Mapping)
         }
@@ -354,46 +342,3 @@ def _config_from_toml(data: Mapping[str, object]) -> AppConfig:
 
     return config
 
-
-def _template_from_toml(name: str, data: Mapping[str, object]) -> TemplateSettings:
-    defaults = TemplateSettings()
-    return TemplateSettings(
-        output_height=int(data.get("output_height", defaults.output_height)),
-        video_bitrate_kbps=_template_video_bitrate(name, data, defaults.video_bitrate_kbps),
-        timezone=str(data.get("timezone", defaults.timezone)),
-        audio_codec=str(data.get("audio_codec", defaults.audio_codec)),
-        audio_bitrate_kbps=int(data.get("audio_bitrate_kbps", defaults.audio_bitrate_kbps)),
-        ffmpeg_preset=str(data.get("ffmpeg_preset", defaults.ffmpeg_preset)),
-        original_handling=OriginalHandling(
-            str(data.get("original_handling", defaults.original_handling))
-        ),
-    )
-
-
-def _template_video_bitrate(name: str, data: Mapping[str, object], default: int) -> int:
-    """Resolve the single template bitrate, migrating legacy day/evening values.
-
-    The new key wins. Otherwise the present legacy value is used, or the larger
-    of the two when both are present; a differing pair logs one warning, because
-    the old file configured two knobs and only one survives. ``evening_start``
-    has no replacement and is ignored.
-    """
-    if "video_bitrate_kbps" in data:
-        return int(data["video_bitrate_kbps"])
-    legacy = [
-        int(data[key])
-        for key in ("daytime_video_bitrate_kbps", "evening_video_bitrate_kbps")
-        if key in data
-    ]
-    if not legacy:
-        return default
-    merged = max(legacy)
-    if len(legacy) == 2 and legacy[0] != legacy[1]:
-        _log.warning(
-            "template %r has differing day/evening bitrates (%s); using the larger "
-            "value %s kbps as the single video bitrate",
-            name,
-            " / ".join(f"{value} kbps" for value in legacy),
-            merged,
-        )
-    return merged

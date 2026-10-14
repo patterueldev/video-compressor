@@ -55,9 +55,11 @@ class ClaimedJob:
     """One job as delivered by ``POST /jobs/claim``.
 
     ``destination`` is the raw convert-flow destination spec (issue #40; decoded
-    by :mod:`videocompressor.worker.destination`), ``None`` for a legacy claim.
-    ``delete_original`` is ``None`` when the claim carried no flag (legacy or an
-    omitted default), and explicit ``True``/``False`` otherwise.
+    by :mod:`videocompressor.worker.destination_paths`), ``None`` for a legacy
+    claim. ``delete_original`` is ``None`` when the claim carried no flag (legacy
+    or an omitted default), and explicit ``True``/``False`` otherwise. ``naming``
+    is the raw optional output-name spec (issue #87), ``None`` when the claim
+    omitted it or carried a malformed value.
     """
 
     root_id: str
@@ -68,6 +70,7 @@ class ClaimedJob:
     capture_time: str | None = None
     destination: Mapping[str, Any] | None = None
     delete_original: bool | None = None
+    naming: Mapping[str, Any] | None = None
 
 
 class ControllerClient:
@@ -138,6 +141,7 @@ class ControllerClient:
         settings = payload.get("settings")
         destination = payload.get("destination")
         delete_original = payload.get("delete_original")
+        naming = payload.get("naming")
         return ClaimedJob(
             root_id=root_id,
             relative_path=relative_path,
@@ -147,6 +151,7 @@ class ControllerClient:
             capture_time=_optional_str(payload.get("capture_time")),
             destination=dict(destination) if isinstance(destination, Mapping) else None,
             delete_original=delete_original if isinstance(delete_original, bool) else None,
+            naming=dict(naming) if isinstance(naming, Mapping) else None,
         )
 
     def complete(self, worker_id: str, job: ClaimedJob, output: Fingerprint) -> None:

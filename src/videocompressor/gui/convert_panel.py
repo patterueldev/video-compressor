@@ -131,6 +131,7 @@ class ConvertPanel(QWidget):
         self.destination.mode_changed.connect(self._on_mode_changed)
         self.destination.changed.connect(self._revalidate)
         self.template_combo.currentTextChanged.connect(self._update_start_enabled)
+        self.template_combo.currentTextChanged.connect(self._update_name_preview)
         self.delete_checkbox.toggled.connect(self._on_delete_toggled)
         self.start_button.clicked.connect(self.start)
 
@@ -154,6 +155,7 @@ class ConvertPanel(QWidget):
         finally:
             self.template_combo.blockSignals(False)
         self._revalidate()
+        self._update_name_preview()
 
     def add_paths(self, paths: Iterable[Path]) -> None:
         """Append picked paths to the pending list and refresh the status lines.
@@ -344,6 +346,11 @@ class ConvertPanel(QWidget):
     def _on_delete_toggled(self, checked: bool) -> None:
         if self.delete_checkbox.isEnabled():
             self._delete_choice = checked
+
+    def _update_name_preview(self) -> None:
+        """Show the selected template's effective pattern and a sample name (#87)."""
+        name = self.template_combo.currentText()
+        self.destination.show_template(self.config.templates.get(name))
 
     def _refresh_table(self) -> None:
         entries = self.selection.entries()

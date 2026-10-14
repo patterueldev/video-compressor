@@ -34,13 +34,16 @@ def make_job(
     root_id: str = "archive",
     destination: dict[str, Any] | None = None,
     delete_original: bool | None = None,
+    naming: dict[str, Any] | None = None,
+    capture_time: str | None = None,
     **settings: Any,
 ) -> ClaimedJob:
     """Build a claim payload for tests.
 
     ``destination`` is the raw convert-flow spec (issue #40); ``None`` keeps the
     legacy same-folder swap. ``delete_original`` is tri-state: ``None`` means the
-    claim carried no flag.
+    claim carried no flag. ``naming`` is the raw optional output-name spec
+    (issue #87); ``capture_time`` the claim's resolved capture time as ISO text.
     """
     return ClaimedJob(
         root_id=root_id,
@@ -48,8 +51,10 @@ def make_job(
         template_id="motorcycle",
         settings={**DEFAULT_SETTINGS, **settings},
         settings_hash="settings-hash",
+        capture_time=capture_time,
         destination=destination,
         delete_original=delete_original,
+        naming=naming,
     )
 
 
