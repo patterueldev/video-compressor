@@ -9,7 +9,9 @@ from videocompressor.core.config import (
     AppConfig,
     CaptureTimeSettings,
     default_config_path,
+    duplicate_template,
     load_config,
+    rename_template,
     save_config,
 )
 from videocompressor.core.models import CaptureTimeMode, TemplateSettings
@@ -195,3 +197,66 @@ def test_saving_a_loaded_legacy_config_writes_only_the_new_shape(tmp_path):
     assert "evening_video_bitrate_kbps" not in text
     assert "evening_start" not in text
     assert load_config(saved) == config
+
+
+# -- output name patterns (issue #87) ----------------------------------------
+
+
+def test_round_trip_persists_the_name_pattern(tmp_path):
+    pattern = "{date}_{name}"
+    original = AppConfig(
+        templates={DEFAULT_TEMPLATE_NAME: replace(TemplateSettings(), name_pattern=pattern)}
+    )
+
+    path = save_config(original, tmp_path / "config.toml")
+
+    assert f'name_pattern = "{pattern}"' in path.read_text(encoding="utf-8")
+    assert load_config(path).templates[DEFAULT_TEMPLATE_NAME].name_pattern == pattern
+
+
+def test_template_without_a_name_pattern_loads_the_default(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("[templates.motorcycle]\noutput_height = 720\n", encoding="utf-8")
+
+    template = load_config(path).templates[DEFAULT_TEMPLATE_NAME]
+    assert template.name_pattern == "{name}"
+
+
+def test_invalid_stored_name_pattern_falls_back_to_the_default_with_a_warning(tmp_path, caplog):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[templates.motorcycle]\nname_pattern = "{camera}_{name}"\n', encoding="utf-8"
+    )
+
+    with caplog.at_level(logging.WARNING, logger="videocompressor.core"):
+        config = load_config(path)
+
+    assert config.templates[DEFAULT_TEMPLATE_NAME].name_pattern == "{name}"
+    warnings = _core_warnings(caplog)
+    assert len(warnings) == 1
+    assert "name_pattern" in warnings[0].getMessage()
+
+
+def test_non_string_name_pattern_falls_back_to_the_default(tmp_path, caplog):
+    path = tmp_path / "config.toml"
+    path.write_text("[templates.motorcycle]\nname_pattern = 7\n", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="videocompressor.core"):
+        config = load_config(path)
+
+    assert config.templates[DEFAULT_TEMPLATE_NAME].name_pattern == "{name}"
+    assert len(_core_warnings(caplog)) == 1
+
+
+def test_duplicate_and_rename_preserve_the_name_pattern():
+    config = AppConfig(
+        templates={
+            DEFAULT_TEMPLATE_NAME: replace(TemplateSettings(), name_pattern="{date}_{name}")
+        }
+    )
+
+    duplicate_template(config, DEFAULT_TEMPLATE_NAME, "copy")
+    assert config.templates["copy"].name_pattern == "{date}_{name}"
+
+    rename_template(config, "copy", "renamed")
+    assert config.templates["renamed"].name_pattern == "{date}_{name}"

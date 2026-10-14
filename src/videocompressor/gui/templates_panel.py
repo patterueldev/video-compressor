@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Signal
@@ -27,6 +28,12 @@ from videocompressor.core.config import (
     validate_template,
 )
 from videocompressor.core.models import OriginalHandling, TemplateSettings
+from videocompressor.core.naming import (
+    NamePatternError,
+    needs_capture_time,
+    render_output_name,
+    validate_pattern,
+)
 
 #: x265 presets offered in the editor (an editable combo still accepts others).
 _PRESETS = (
@@ -43,6 +50,15 @@ _PRESETS = (
 
 #: Human label for the single v1 original-handling mode (read-only in the editor).
 _ORIGINAL_LABEL = "Replace source after validated transfer"
+
+#: Sample clip and capture instant for the live pattern example.
+_SAMPLE_NAME = "GS010001"
+_SAMPLE_WHEN = datetime(2025, 4, 19, 21, 17, 5)
+
+_PATTERN_TOKENS = (
+    "Tokens: {name} (clip name), {date}, {time}, {datetime}; each date/time token"
+    " takes an optional :strftime format, e.g. {datetime:%Y%m%d%H%M}."
+)
 
 
 class TemplatesPanel(QWidget):
@@ -78,6 +94,9 @@ class TemplatesPanel(QWidget):
         self._preset = QComboBox()
         self._preset.setEditable(True)
         self._preset.addItems(_PRESETS)
+        self._pattern = QLineEdit()
+        self.pattern_hint = QLabel("")
+        self.pattern_hint.setWordWrap(True)
         self._original = QLabel(_ORIGINAL_LABEL)
         self._error = QLabel("")
         self._error.setWordWrap(True)
@@ -89,6 +108,7 @@ class TemplatesPanel(QWidget):
         form.addRow("Audio", self._audio_codec)
         form.addRow("Audio bitrate", self._audio_bitrate)
         form.addRow("FFmpeg preset", self._preset)
+        form.addRow("Output name pattern", self._pattern)
         form.addRow("Original handling", self._original)
 
         buttons = QHBoxLayout()
@@ -106,10 +126,12 @@ class TemplatesPanel(QWidget):
         outer.addWidget(QLabel("Processing template"))
         outer.addWidget(self._combo)
         outer.addLayout(form)
+        outer.addWidget(self.pattern_hint)
         outer.addWidget(self._error)
         outer.addLayout(buttons)
         outer.addStretch(1)
         self._combo.currentTextChanged.connect(self._on_selected)
+        self._pattern.textChanged.connect(self._refresh_pattern_hint)
         self.refresh()
 
     # -- selection ---------------------------------------------------------
@@ -155,6 +177,8 @@ class TemplatesPanel(QWidget):
         self._audio_codec.setText(settings.audio_codec)
         self._audio_bitrate.setValue(settings.audio_bitrate_kbps)
         self._preset.setCurrentText(settings.ffmpeg_preset)
+        self._pattern.setText(settings.name_pattern)
+        self._refresh_pattern_hint()
         self._original_handling = settings.original_handling
         self._original.setText(_ORIGINAL_LABEL)
         self._error.clear()
@@ -209,7 +233,23 @@ class TemplatesPanel(QWidget):
             audio_bitrate_kbps=self._audio_bitrate.value(),
             ffmpeg_preset=self._preset.currentText().strip(),
             original_handling=self._original_handling,
+            name_pattern=self._pattern.text(),
         )
+
+    def _refresh_pattern_hint(self) -> None:
+        """Live token hint and example for the pattern field (issue #87)."""
+        pattern = self._pattern.text()
+        problems = validate_pattern(pattern)
+        if problems:
+            self.pattern_hint.setText("Name pattern: " + "; ".join(problems))
+            return
+        when = _SAMPLE_WHEN if needs_capture_time(pattern) else None
+        try:
+            rendered = render_output_name(pattern, name=_SAMPLE_NAME, when=when)
+        except NamePatternError as exc:
+            self.pattern_hint.setText(f"Name pattern: {exc}")
+            return
+        self.pattern_hint.setText(f"{_PATTERN_TOKENS} Example: {rendered}.MP4")
 
     # -- dialogs -----------------------------------------------------------
 

@@ -45,6 +45,7 @@ from videocompressor.core.fingerprint import fingerprint_file
 from videocompressor.core.manifest import Manifest
 from videocompressor.core.models import (
     ArchiveRoot,
+    CaptureTimeMode,
     Classification,
     ClipRecord,
     Fingerprint,
@@ -103,6 +104,7 @@ class ControllerServer(WorkerRegistryMixin, JobDispatchMixin, JobEnqueueMixin, L
         clock: Clock = system_now,
         lease_ttl_seconds: int = LEASE_TTL_SECONDS,
         sweep_interval_seconds: float = SWEEP_INTERVAL_SECONDS,
+        capture_mode: CaptureTimeMode = CaptureTimeMode.LOCAL_WALL_CLOCK,
     ) -> None:
         if not token:
             raise ValueError("the controller token must not be empty")
@@ -113,6 +115,7 @@ class ControllerServer(WorkerRegistryMixin, JobDispatchMixin, JobEnqueueMixin, L
             self.templates = dict(templates)
         else:
             self.templates = {DEFAULT_TEMPLATE_NAME: TemplateSettings()}
+        self._capture_mode = capture_mode
         self._roots = roots if roots is not None else _no_roots
         self._fingerprint = fingerprint
         self.lease_ttl_seconds = lease_ttl_seconds

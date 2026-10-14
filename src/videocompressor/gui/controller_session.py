@@ -94,6 +94,7 @@ def start_controller_session(
         templates=config.templates,
         roots=lambda: config.roots,
         lease_ttl_seconds=config.controller.orphan_grace_seconds,
+        capture_mode=config.capture_time.mode,
     )
     try:
         server.start_background()

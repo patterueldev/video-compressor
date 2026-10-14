@@ -69,6 +69,7 @@ def run(args: argparse.Namespace) -> int:
         templates=config.templates,
         roots=lambda: config.roots,
         lease_ttl_seconds=config.controller.orphan_grace_seconds,
+        capture_mode=config.capture_time.mode,
     )
     server.start_background()
     print(f"vc controller: listening on {server.base_url}")

@@ -82,6 +82,18 @@ editable per template. The app should estimate output size from clip duration an
 plus audio bitrates. For reference, 800 kbps video alone is about 90 MB for 15 minutes; AAC audio
 and container overhead add to that, so actual size depends on duration and settings.
 
+### Output names
+
+Each template carries an output name pattern applied when the destination is an output folder
+(a registered output root or a custom folder): literal text plus capture-time tokens. The tokens
+are `{name}` (the source clip's file name without its suffix), `{date}`, `{time}`, and
+`{datetime}`; the date/time tokens accept an optional `:strftime` format inside the braces
+(for example `{date:%Y%m%d%H%M}_{name}`). The default `{name}` keeps the source clip's own file
+name, so existing setups behave exactly as before. The pattern decides the output file name only:
+same-folder swaps always keep the source name, and sources as well as already-placed outputs are
+never renamed by it. A pattern that needs a capture time fails that clip visibly when none can be
+found, rather than writing a wrongly named output.
+
 ## Capture time and classification
 
 These rules feed the optional scan/dry-run tooling, the review queue, and the GUI tables; the

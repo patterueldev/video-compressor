@@ -169,7 +169,12 @@ def destination_from_dict(payload: object) -> Destination | None:
 
 @dataclass(frozen=True)
 class TemplateSettings:
-    """Encoding template; defaults are the motorcycle template from plan.md."""
+    """Encoding template; defaults are the motorcycle template from plan.md.
+
+    ``name_pattern`` (issue #87) is the output-name pattern for output-folder
+    destinations; ``{name}`` (the default) keeps the source clip's own name.
+    See :mod:`videocompressor.core.naming` for the token table.
+    """
 
     output_height: int = 720
     video_bitrate_kbps: int = 800
@@ -178,6 +183,7 @@ class TemplateSettings:
     audio_bitrate_kbps: int = 96
     ffmpeg_preset: str = "medium"
     original_handling: OriginalHandling = OriginalHandling.REPLACE_AFTER_VALIDATED_TRANSFER
+    name_pattern: str = "{name}"
 
 
 @dataclass(frozen=True)

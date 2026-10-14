@@ -14,6 +14,7 @@ from videocompressor.controller.server import ControllerServer
 from videocompressor.controller.store import ControllerStore
 from videocompressor.core.models import (
     CaptureTime,
+    CaptureTimeMode,
     ClipRecord,
     Fingerprint,
     JobState,
@@ -227,3 +228,71 @@ def test_reregistration_refreshes_the_claim_filter(api, seed_clip, manifest):
     assert api.post("/jobs/claim", {"worker_id": "node-a"}) == (204, None)
     record = manifest.get_clip("archive", "third.MP4")
     assert record is not None and record.state is JobState.QUEUED
+
+
+# -- output name patterns (issue #87) -----------------------------------------
+
+
+def _naming_claim(
+    tmp_path, clock, make_api, templates, *, capture_mode=CaptureTimeMode.LOCAL_WALL_CLOCK
+):
+    """Claim one seeded clip from a controller with ``templates`` and return its job."""
+    manifest = MemoryManifest(clock=clock)
+    store = ControllerStore.open(tmp_path / "controller.sqlite", clock=clock)
+    source = Fingerprint(size_bytes=4096, mtime_ns=1, digest="source-digest")
+    manifest.upsert_clip(
+        ClipRecord(
+            root_id="archive",
+            relative_path="clip.MP4",
+            source=source,
+            template_id="motorcycle",
+            created_at=clock(),
+            updated_at=clock(),
+        )
+    )
+    with ControllerServer(
+        store=store,
+        manifest=manifest,
+        token="t",
+        port=0,
+        clock=clock,
+        templates=templates,
+        capture_mode=capture_mode,
+        sweep_interval_seconds=3600,
+    ) as controller:
+        client = make_api(controller, token="t")
+        client.register("w")
+        status, body = client.post("/jobs/claim", {"worker_id": "w"})
+    assert status == 200, body
+    return body["job"]
+
+
+def test_claim_omits_naming_for_the_default_pattern(api, seed_clip):
+    api.register("w")
+    seed_clip("clip.MP4")
+
+    status, body = api.post("/jobs/claim", {"worker_id": "w"})
+
+    assert status == 200
+    assert "naming" not in body["job"]
+
+
+def test_claim_carries_naming_for_a_non_default_pattern(tmp_path, clock, make_api):
+    templates = {"motorcycle": replace(TemplateSettings(), name_pattern="{date}_{name}")}
+
+    job = _naming_claim(tmp_path, clock, make_api, templates)
+
+    assert job["naming"] == {
+        "pattern": "{date}_{name}",
+        "timezone": "Asia/Manila",
+        "capture_mode": "local_wall_clock",
+    }
+
+
+def test_claim_naming_carries_the_configured_capture_mode(tmp_path, clock, make_api):
+    templates = {"motorcycle": replace(TemplateSettings(), name_pattern="{date}_{name}")}
+
+    job = _naming_claim(tmp_path, clock, make_api, templates, capture_mode=CaptureTimeMode.UTC)
+
+    assert job["naming"]["capture_mode"] == "utc"
+    assert job["naming"]["timezone"] == "Asia/Manila"

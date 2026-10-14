@@ -67,6 +67,52 @@ def test_invalid_timezone_blocks_the_write(panel):
     assert not config_path.exists()
 
 
+# -- output name patterns (issue #87) -----------------------------------------
+
+
+def test_name_pattern_save_round_trips(panel):
+    templates, config_path = panel
+    templates.load_editor(replace(TemplateSettings(), name_pattern="{date}_{name}"))
+
+    assert templates.save_current()
+    assert load_config(config_path).templates[DEFAULT_TEMPLATE_NAME].name_pattern == "{date}_{name}"
+
+
+def test_name_pattern_hint_previews_the_render(panel):
+    templates, _path = panel
+    templates.load_editor(
+        replace(TemplateSettings(), name_pattern="{datetime:%Y%m%d%H%M}_{name}")
+    )
+
+    assert "202504192117_GS010001.MP4" in templates.pattern_hint.text()
+
+    templates.load_editor(replace(TemplateSettings(), name_pattern="{name}"))
+    assert "GS010001.MP4" in templates.pattern_hint.text()
+
+
+def test_invalid_name_pattern_blocks_the_write(panel):
+    templates, config_path = panel
+    templates.load_editor(replace(TemplateSettings(), name_pattern="{camera}_{name}"))
+
+    assert not templates.save_current()
+    assert templates.last_error is not None and "camera" in templates.last_error
+    assert "camera" in templates.pattern_hint.text()
+    assert not config_path.exists()
+
+
+def test_name_pattern_survives_duplicate_and_rename(panel):
+    templates, config_path = panel
+    templates.load_editor(replace(TemplateSettings(), name_pattern="{date}_{name}"))
+    assert templates.save_current()
+
+    assert templates.duplicate_current("copy")
+    assert templates.current_settings().name_pattern == "{date}_{name}"
+    assert templates.rename_current("renamed")
+
+    loaded = load_config(config_path)
+    assert loaded.templates["renamed"].name_pattern == "{date}_{name}"
+
+
 def test_create_duplicate_and_rename_persist(panel):
     templates, config_path = panel
     assert templates.create_template("vlog")

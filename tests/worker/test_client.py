@@ -146,6 +146,50 @@ def test_claim_leaves_odd_destination_fields_as_absent(monkeypatch):
     assert job.delete_original is None
 
 
+def test_claim_decodes_the_naming_spec(monkeypatch):
+    client = ControllerClient("http://127.0.0.1:1", TOKEN)
+    response = {
+        "job": {
+            "root_id": "archive",
+            "relative_path": CLIP,
+            "destination": {"kind": "output_root", "root_id": "outputs"},
+            "delete_original": False,
+            "naming": {
+                "pattern": "{date}_{name}",
+                "timezone": "Asia/Manila",
+                "capture_mode": "utc",
+            },
+        }
+    }
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: response)
+
+    job = client.claim("node-a")
+
+    assert job is not None
+    assert job.naming == {
+        "pattern": "{date}_{name}",
+        "timezone": "Asia/Manila",
+        "capture_mode": "utc",
+    }
+
+
+def test_claim_leaves_a_malformed_naming_payload_absent(monkeypatch):
+    client = ControllerClient("http://127.0.0.1:1", TOKEN)
+    response = {
+        "job": {
+            "root_id": "archive",
+            "relative_path": CLIP,
+            "naming": ["not", "an", "object"],
+        }
+    }
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: response)
+
+    job = client.claim("node-a")
+
+    assert job is not None
+    assert job.naming is None
+
+
 def test_claim_without_a_destination_is_a_legacy_job(server, seed_clip):
     seed_clip(CLIP)
     client = ControllerClient(server.base_url, TOKEN)
